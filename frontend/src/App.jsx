@@ -4,10 +4,16 @@ import { isAddress } from "viem";
 import { requestPaymentRequirement, submitMockPaidTask } from "./apiClient.js";
 import {
   BASE_SEPOLIA,
+  BASE_SEPOLIA_EXPLORER_URL,
   BASE_SEPOLIA_HEX_CHAIN_ID,
   RECEIPT_CONTRACT_ADDRESS,
   publicClient,
 } from "./config.js";
+import {
+  getReceipt,
+  hasReceipt,
+  recordReceipt,
+} from "./receiptContract.js";
 import {
   connectWallet,
   discoverWallets,
@@ -30,6 +36,16 @@ const PAYMENT_STATUS = {
   failed: "Failed",
 };
 
+const RECEIPT_STATUS = {
+  waiting: "Ready to record",
+  ready: "Ready to record",
+  confirming: "Confirm in wallet",
+  pending: "Transaction pending",
+  recorded: "Receipt recorded",
+  already: "Already recorded",
+  failed: "Failed",
+};
+
 export default function App() {
   const [taskType, setTaskType] = useState("summarize");
   const [input, setInput] = useState(
@@ -45,6 +61,13 @@ export default function App() {
     address: "",
     chainId: "",
   });
+  const [receiptState, setReceiptState] = useState({
+    status: "waiting",
+    message: "Complete a mock-paid task before recording an onchain receipt.",
+    txHash: "",
+    receipt: null,
+    isRecorded: null,
+  });
   const [rpcStatus, setRpcStatus] = useState("Checking");
 
   const selectedWallet = useMemo(
@@ -54,6 +77,29 @@ export default function App() {
 
   const receiptAddressConfigured =
     RECEIPT_CONTRACT_ADDRESS && isAddress(RECEIPT_CONTRACT_ADDRESS);
+  const hasReceiptPayload = Boolean(
+    taskResult?.taskId && taskResult?.requestHash && taskResult?.resultHash,
+  );
+  const walletConnected = Boolean(walletState.address);
+  const walletOnBaseSepolia =
+    walletState.chainId?.toLowerCase() === BASE_SEPOLIA_HEX_CHAIN_ID;
+  const receiptWritePending =
+    receiptState.status === "confirming" || receiptState.status === "pending";
+  const canRecordReceipt = Boolean(
+    hasReceiptPayload &&
+      selectedWallet &&
+      walletConnected &&
+      walletOnBaseSepolia &&
+      receiptAddressConfigured &&
+      receiptState.isRecorded === false &&
+      !receiptWritePending,
+  );
+  const contractExplorerUrl = receiptAddressConfigured
+    ? `${BASE_SEPOLIA_EXPLORER_URL}/address/${RECEIPT_CONTRACT_ADDRESS}`
+    : "";
+  const txExplorerUrl = receiptState.txHash
+    ? `${BASE_SEPOLIA_EXPLORER_URL}/tx/${receiptState.txHash}`
+    : "";
 
   useEffect(() => discoverWallets(setWallets), []);
 
@@ -84,12 +130,162 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const provider = selectedWallet?.provider;
+    if (!provider?.on) {
+      return undefined;
+    }
+
+    function handleAccountsChanged(accounts = []) {
+      setWalletState((current) => ({
+        ...current,
+        address: accounts[0] ?? "",
+      }));
+
+      if (!accounts[0]) {
+        setReceiptState((current) => ({
+          ...current,
+          status: current.status === "pending" ? "failed" : current.status,
+          message:
+            current.status === "pending"
+              ? "Wallet disconnected before the transaction finished."
+              : current.message,
+        }));
+      }
+    }
+
+    function handleChainChanged(chainId) {
+      setWalletState((current) => ({
+        ...current,
+        chainId,
+      }));
+    }
+
+    function handleDisconnect() {
+      setWalletState({
+        address: "",
+        chainId: "",
+      });
+      setReceiptState((current) => ({
+        ...current,
+        status: current.status === "pending" ? "failed" : current.status,
+        message:
+          current.status === "pending"
+            ? "Wallet disconnected before the transaction finished."
+            : current.message,
+      }));
+    }
+
+    provider.on("accountsChanged", handleAccountsChanged);
+    provider.on("chainChanged", handleChainChanged);
+    provider.on("disconnect", handleDisconnect);
+
+    return () => {
+      provider.removeListener?.("accountsChanged", handleAccountsChanged);
+      provider.removeListener?.("chainChanged", handleChainChanged);
+      provider.removeListener?.("disconnect", handleDisconnect);
+    };
+  }, [selectedWallet]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkReceiptState() {
+      if (!hasReceiptPayload) {
+        setReceiptState({
+          status: "waiting",
+          message: "Complete a mock-paid task before recording an onchain receipt.",
+          txHash: "",
+          receipt: null,
+          isRecorded: null,
+        });
+        return;
+      }
+
+      if (!receiptAddressConfigured) {
+        setReceiptState({
+          status: "failed",
+          message: "Receipt contract address is not configured.",
+          txHash: "",
+          receipt: null,
+          isRecorded: null,
+        });
+        return;
+      }
+
+      setReceiptState({
+        status: "ready",
+        message: "Checking Base Sepolia for an existing receipt.",
+        txHash: "",
+        receipt: null,
+        isRecorded: null,
+      });
+
+      try {
+        const receiptStatus = await readReceiptStatus(taskResult.taskId);
+        if (cancelled) {
+          return;
+        }
+
+        if (receiptStatus.isRecorded) {
+          setReceiptState({
+            status: "already",
+            message: "Receipt already recorded on Base Sepolia.",
+            txHash: "",
+            receipt: receiptStatus.receipt,
+            isRecorded: true,
+          });
+          return;
+        }
+
+        setReceiptState({
+          status: "ready",
+          message: "Ready to record on Base Sepolia with your connected wallet.",
+          txHash: "",
+          receipt: null,
+          isRecorded: false,
+        });
+      } catch (readError) {
+        if (cancelled) {
+          return;
+        }
+
+        setReceiptState({
+          status: "failed",
+          message: toReceiptErrorMessage(readError),
+          txHash: "",
+          receipt: null,
+          isRecorded: null,
+        });
+      }
+    }
+
+    checkReceiptState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    hasReceiptPayload,
+    receiptAddressConfigured,
+    taskResult?.taskId,
+    taskResult?.requestHash,
+    taskResult?.resultHash,
+  ]);
+
   async function handleRequestTask(event) {
     event.preventDefault();
     setError("");
     setTaskResult(null);
     setPaymentRequirement(null);
     setPaymentStatus("idle");
+    setReceiptState({
+      status: "waiting",
+      message: "Complete a mock-paid task before recording an onchain receipt.",
+      txHash: "",
+      receipt: null,
+      isRecorded: null,
+    });
 
     try {
       const requirement = await requestPaymentRequirement({
@@ -151,6 +347,158 @@ export default function App() {
       setWalletState(nextWalletState);
     } catch (switchError) {
       setError(switchError.message);
+    }
+  }
+
+  async function handleRecordReceipt() {
+    setError("");
+
+    if (!hasReceiptPayload) {
+      setReceiptState({
+        status: "failed",
+        message: "Generate a task result before recording a receipt.",
+        txHash: "",
+        receipt: null,
+        isRecorded: null,
+      });
+      return;
+    }
+
+    if (!selectedWallet) {
+      setReceiptState({
+        status: "failed",
+        message: "Select an injected wallet before recording a receipt.",
+        txHash: "",
+        receipt: null,
+        isRecorded: false,
+      });
+      return;
+    }
+
+    if (!walletConnected) {
+      setReceiptState({
+        status: "failed",
+        message: "Connect your wallet before recording a receipt.",
+        txHash: "",
+        receipt: null,
+        isRecorded: false,
+      });
+      return;
+    }
+
+    if (!walletOnBaseSepolia) {
+      setReceiptState({
+        status: "failed",
+        message: "Switch your wallet to Base Sepolia before recording.",
+        txHash: "",
+        receipt: null,
+        isRecorded: false,
+      });
+      return;
+    }
+
+    if (!receiptAddressConfigured) {
+      setReceiptState({
+        status: "failed",
+        message: "Receipt contract address is not configured.",
+        txHash: "",
+        receipt: null,
+        isRecorded: null,
+      });
+      return;
+    }
+
+    if (receiptWritePending) {
+      return;
+    }
+
+    try {
+      setReceiptState({
+        status: "confirming",
+        message: "Checking for duplicates, then confirm in your wallet.",
+        txHash: "",
+        receipt: null,
+        isRecorded: false,
+      });
+
+      const beforeWrite = await readReceiptStatus(taskResult.taskId);
+      if (beforeWrite.isRecorded) {
+        setReceiptState({
+          status: "already",
+          message: "Receipt already recorded.",
+          txHash: "",
+          receipt: beforeWrite.receipt,
+          isRecorded: true,
+        });
+        return;
+      }
+
+      const txHash = await recordReceipt({
+        provider: selectedWallet.provider,
+        account: walletState.address,
+        taskId: taskResult.taskId,
+        requestHash: taskResult.requestHash,
+        resultHash: taskResult.resultHash,
+      });
+
+      setReceiptState({
+        status: "pending",
+        message: "Transaction submitted. Waiting for Base Sepolia confirmation.",
+        txHash,
+        receipt: null,
+        isRecorded: false,
+      });
+
+      const txReceipt = await publicClient.waitForTransactionReceipt({
+        hash: txHash,
+      });
+
+      if (txReceipt.status !== "success") {
+        throw new Error("Receipt transaction reverted on Base Sepolia.");
+      }
+
+      const afterWrite = await readReceiptStatus(taskResult.taskId);
+      if (!afterWrite.isRecorded) {
+        throw new Error("Transaction succeeded, but the receipt was not found.");
+      }
+
+      setReceiptState({
+        status: "recorded",
+        message: "Receipt recorded on Base Sepolia.",
+        txHash,
+        receipt: afterWrite.receipt,
+        isRecorded: true,
+      });
+    } catch (recordError) {
+      if (isDuplicateReceiptError(recordError)) {
+        try {
+          const duplicateReceipt = await readReceiptStatus(taskResult.taskId);
+          setReceiptState({
+            status: "already",
+            message: "Receipt already recorded.",
+            txHash: receiptState.txHash,
+            receipt: duplicateReceipt.receipt,
+            isRecorded: true,
+          });
+          return;
+        } catch {
+          setReceiptState({
+            status: "already",
+            message: "Receipt already recorded.",
+            txHash: receiptState.txHash,
+            receipt: null,
+            isRecorded: true,
+          });
+          return;
+        }
+      }
+
+      setReceiptState((current) => ({
+        ...current,
+        status: "failed",
+        message: toReceiptErrorMessage(recordError),
+        isRecorded: false,
+      }));
     }
   }
 
@@ -328,26 +676,70 @@ export default function App() {
             <h2>Onchain Proof</h2>
           </div>
 
+          <div className={`status-card receipt-status status-${receiptState.status}`}>
+            <span>Proof status</span>
+            <strong>{RECEIPT_STATUS[receiptState.status]}</strong>
+            <small>{receiptState.message}</small>
+          </div>
+
           <dl className="facts">
             <div>
               <dt>Receipt contract</dt>
               <dd>
-                {receiptAddressConfigured
-                  ? RECEIPT_CONTRACT_ADDRESS
-                  : "Receipt contract not deployed yet."}
+                {receiptAddressConfigured ? (
+                  <a
+                    href={contractExplorerUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {RECEIPT_CONTRACT_ADDRESS}
+                  </a>
+                ) : (
+                  "Receipt contract not deployed yet."
+                )}
               </dd>
             </div>
             <div>
               <dt>Registry</dt>
               <dd>AgentTaskReceipt</dd>
             </div>
+            <div>
+              <dt>Transaction</dt>
+              <dd>
+                {receiptState.txHash ? (
+                  <a href={txExplorerUrl} target="_blank" rel="noreferrer">
+                    {receiptState.txHash}
+                  </a>
+                ) : (
+                  "Pending"
+                )}
+              </dd>
+            </div>
+            {receiptState.receipt ? (
+              <>
+                <div>
+                  <dt>Requester</dt>
+                  <dd>{receiptState.receipt.requester}</dd>
+                </div>
+                <div>
+                  <dt>Timestamp</dt>
+                  <dd>{formatReceiptTimestamp(receiptState.receipt.timestamp)}</dd>
+                </div>
+              </>
+            ) : null}
           </dl>
 
-          <button type="button" disabled>
+          <button
+            type="button"
+            className="primary"
+            onClick={handleRecordReceipt}
+            disabled={!canRecordReceipt}
+          >
             Record Receipt Onchain
           </button>
           <small className="proof-note">
-            Local demo writes are disabled until a Base Sepolia receipt contract is deployed and configured.
+            Receipt writes are real Base Sepolia transactions and must be confirmed
+            interactively in your injected wallet.
           </small>
         </section>
       </form>
@@ -361,3 +753,55 @@ export default function App() {
   );
 }
 
+async function readReceiptStatus(taskId) {
+  const isRecorded = await hasReceipt(taskId);
+
+  if (!isRecorded) {
+    return {
+      isRecorded: false,
+      receipt: null,
+    };
+  }
+
+  return {
+    isRecorded: true,
+    receipt: await getReceipt(taskId),
+  };
+}
+
+function formatReceiptTimestamp(timestamp) {
+  const seconds = Number(timestamp);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "Unknown";
+  }
+
+  return new Date(seconds * 1000).toLocaleString();
+}
+
+function isDuplicateReceiptError(error) {
+  const message = String(error?.shortMessage ?? error?.message ?? error ?? "");
+  return /DuplicateTaskId|duplicate|already recorded/iu.test(message);
+}
+
+function toReceiptErrorMessage(error) {
+  const code = error?.code ?? error?.cause?.code;
+  const message = String(error?.shortMessage ?? error?.message ?? error ?? "");
+
+  if (code === 4001 || /reject|denied|cancel/iu.test(message)) {
+    return "Transaction was rejected in the wallet.";
+  }
+
+  if (/DuplicateTaskId|duplicate|already recorded/iu.test(message)) {
+    return "Receipt already recorded.";
+  }
+
+  if (/revert/iu.test(message)) {
+    return "Receipt transaction reverted on Base Sepolia.";
+  }
+
+  if (/network|rpc|fetch|timeout/iu.test(message)) {
+    return "Base Sepolia RPC error. Check the network and try again.";
+  }
+
+  return message || "Receipt recording failed.";
+}

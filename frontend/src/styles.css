@@ -61,6 +61,16 @@ button:disabled {
   opacity: 0.55;
 }
 
+a {
+  color: #0052ff;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
 .primary {
   background: #0052ff;
   border-color: #0052ff;
@@ -276,7 +286,24 @@ textarea {
   background: #fff8eb;
 }
 
+.status-ready {
+  border-color: #8db3ff;
+  background: #f4f8ff;
+}
+
+.status-confirming,
+.status-pending {
+  border-color: #f6c469;
+  background: #fff8eb;
+}
+
 .status-verified {
+  border-color: #7bdba8;
+  background: #edfdf4;
+}
+
+.status-recorded,
+.status-already {
   border-color: #7bdba8;
   background: #edfdf4;
 }
@@ -340,6 +367,11 @@ dd {
   line-height: 1.45;
 }
 
+.receipt-status small {
+  color: #46566f;
+  line-height: 1.45;
+}
+
 .error-banner {
   background: #fff1f0;
   border: 1px solid #fda29b;
@@ -382,4 +414,3 @@ dd {
     padding: 16px;
   }
 }
-

@@ -1,10 +1,10 @@
 # Base Agent Pay
 
-**CURRENT STATUS: LOCAL DEVELOPMENT / BASE SEPOLIA TARGET**
+**CURRENT STATUS: LOCAL DEVELOPMENT / BASE SEPOLIA RECEIPT REGISTRY**
 
-Base Agent Pay is a production-quality local demo for a Base builder portfolio. It combines a React task UI, an HTTP `402 Payment Required` task API, a clearly marked x402-style mock payment flow, deterministic mock AI execution, and an optional Base Sepolia receipt registry contract.
+Base Agent Pay is a production-quality local demo for a Base builder portfolio. It combines a React task UI, an HTTP `402 Payment Required` task API, a clearly marked x402-style mock payment flow, deterministic mock AI execution, and a deployed Base Sepolia receipt registry contract.
 
-Base Mainnet is not used. Nothing in this repo deploys a contract automatically, sends a blockchain transaction, moves real funds, or requires paid AI credentials.
+Base Mainnet is not used. Project scripts do not deploy contracts automatically, send blockchain transactions, move real funds, or require paid AI credentials. The only real blockchain action in the app is an interactive wallet-confirmed Base Sepolia receipt write.
 
 ## Architecture
 
@@ -145,8 +145,12 @@ Default local target:
 - Network: Base Sepolia
 - Chain ID: `84532`
 - RPC example: `https://base-sepolia-rpc.publicnode.com`
+- Deployed `AgentTaskReceipt`: [`0x2C1bBa87705eE87465c6da9B00fC941f4557c241`](https://sepolia.basescan.org/address/0x2C1bBa87705eE87465c6da9B00fC941f4557c241)
+- Deployment transaction: [`0xf97b7b7291f345689b4167b2d52a075573229020363980485d81956214b4564d`](https://sepolia.basescan.org/tx/0xf97b7b7291f345689b4167b2d52a075573229020363980485d81956214b4564d)
+- First successful onchain receipt transaction: [`0x554fdcc6ded1c913bc959a02fff885269724787d4da2fe0353873ec56ec69915`](https://sepolia.basescan.org/tx/0x554fdcc6ded1c913bc959a02fff885269724787d4da2fe0353873ec56ec69915)
+- Current receipt count: `1`
 
-Base Mainnet is not configured or used.
+The smart contract is real on Base Sepolia. Receipt writes from the frontend are real Base Sepolia transactions signed interactively by the connected wallet. The x402 payment layer remains `MOCK`, the AI provider remains `MOCK`, and Base Mainnet is not configured or used.
 
 ## Security Model
 
@@ -187,7 +191,7 @@ MOCK_PAYMENT_AMOUNT=0.01
 
 VITE_CHAIN_ID=84532
 VITE_BASE_SEPOLIA_RPC_URL=https://base-sepolia-rpc.publicnode.com
-VITE_RECEIPT_CONTRACT_ADDRESS=
+VITE_RECEIPT_CONTRACT_ADDRESS=0x2C1bBa87705eE87465c6da9B00fC941f4557c241
 VITE_API_URL=/api/task
 ```
 
@@ -230,15 +234,12 @@ npm run build
 npm run api:test
 ```
 
-## Future Deployment Plan
+## Future Plan
 
 1. Select the official `@x402/*` server and client packages for the target runtime.
 2. Configure a real Base Sepolia payment asset, recipient, and facilitator.
 3. Add a non-mock `PaymentAdapter` that verifies payments server-side.
-4. Deploy `AgentTaskReceipt` to Base Sepolia only.
-5. Set `VITE_RECEIPT_CONTRACT_ADDRESS` after deployment.
-6. Add an explicit frontend write path for `recordReceipt`.
-7. Re-run tests and perform a separate deployment review.
+4. Keep receipt writes on Base Sepolia until a separate mainnet review is completed.
+5. Re-run tests and perform a separate deployment review before any production payment work.
 
-No deployment work has been performed in this local implementation.
-
+No new deployment work is performed by the local app.
