@@ -1,0 +1,16 @@
+.DS_Store
+*.log
+
+.env
+.env.local
+frontend/.env
+frontend/.env.local
+
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+out/
+cache/
+broadcast/
+
