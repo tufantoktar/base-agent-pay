@@ -5,6 +5,7 @@ import {
   RECEIPT_CONTRACT_ADDRESS,
   publicClient,
 } from "./config.js";
+import { BUILDER_DATA_SUFFIX } from "./builderAttribution.js";
 
 export const agentTaskReceiptAbi = [
   {
@@ -92,6 +93,7 @@ export async function recordReceipt({
     account: getAddress(account),
     chain: BASE_SEPOLIA,
     transport: custom(provider),
+    dataSuffix: BUILDER_DATA_SUFFIX,
   });
 
   return walletClient.writeContract({

@@ -152,6 +152,14 @@ Default local target:
 
 The smart contract is real on Base Sepolia. Receipt writes from the frontend are real Base Sepolia transactions signed interactively by the connected wallet. The x402 payment layer remains `MOCK`, the AI provider remains `MOCK`, and Base Mainnet is not configured or used.
 
+## Builder Attribution
+
+Builder Code: `bc_tuybnhw2`
+
+ERC-8021 attribution is enabled for future frontend receipt writes. The frontend wallet client appends the Builder Code attribution suffix to transaction calldata automatically, so no smart contract change is required. Existing historical transactions are not retroactively attributed.
+
+The x402 payment remains `MOCK`, AI remains `MOCK`, and receipt writes remain real, interactively confirmed Base Sepolia transactions.
+
 ## Security Model
 
 Secrets must stay server-side or outside the app entirely.

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { isAddress } from "viem";
 
 import { requestPaymentRequirement, submitMockPaidTask } from "./apiClient.js";
+import { BASE_BUILDER_CODE } from "./builderAttribution.js";
 import {
   BASE_SEPOLIA,
   BASE_SEPOLIA_EXPLORER_URL,
@@ -740,6 +741,9 @@ export default function App() {
           <small className="proof-note">
             Receipt writes are real Base Sepolia transactions and must be confirmed
             interactively in your injected wallet.
+          </small>
+          <small className="proof-note">
+            Builder attribution: {BASE_BUILDER_CODE} (ERC-8021 enabled)
           </small>
         </section>
       </form>
