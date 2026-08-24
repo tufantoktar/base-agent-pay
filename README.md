@@ -1,10 +1,10 @@
 # Base Agent Pay
 
-**CURRENT STATUS: LOCAL DEVELOPMENT / BASE SEPOLIA RECEIPT REGISTRY**
+**CURRENT STATUS: BASE MAINNET RECEIPT REGISTRY / MOCK X402**
 
-Base Agent Pay is a production-quality local demo for a Base builder portfolio. It combines a React task UI, an HTTP `402 Payment Required` task API, a clearly marked x402-style mock payment flow, deterministic mock AI execution, and a deployed Base Sepolia receipt registry contract.
+Base Agent Pay is a production-quality demo for a Base builder portfolio. It combines a React task UI, an HTTP `402 Payment Required` task API, a clearly marked x402-style mock payment flow, deterministic mock AI execution, and a deployed Base Mainnet receipt registry contract.
 
-Base Mainnet is not used. Project scripts do not deploy contracts automatically, send blockchain transactions, move real funds, or require paid AI credentials. The only real blockchain action in the app is an interactive wallet-confirmed Base Sepolia receipt write.
+Project scripts do not deploy contracts automatically, send blockchain transactions, move real funds, or require paid AI credentials. The only real blockchain action in the app is an interactive wallet-confirmed Base Mainnet receipt write.
 
 ## Architecture
 
@@ -25,7 +25,7 @@ Task Result
  ↓
 AgentTaskReceipt
  ↓
-Base Sepolia
+Base Mainnet
 ```
 
 ## Project Layout
@@ -53,7 +53,7 @@ base-agent-pay/
 The API is designed around the x402 HTTP payment model:
 
 - `POST /api/task` without a valid payment returns `402 Payment Required`.
-- The `402` body describes Base Sepolia, the mock asset, amount, recipient, facilitator, and payment requirements.
+- The `402` body describes the active Base network, the mock asset, amount, recipient, facilitator, and payment requirements.
 - Retrying with a valid development `X-PAYMENT` header executes the task and returns `taskId`, `requestHash`, and `resultHash`.
 - Payment verification remains server-side in `api/task/payment-adapter.js`.
 
@@ -79,7 +79,7 @@ The mock adapter is intentionally not a real x402 implementation:
 - It never transfers ETH or tokens.
 - It marks every response as `mode: "mock"`.
 
-A future real adapter should be added beside `MockPaymentAdapter` after the official package APIs, facilitator configuration, and Base Sepolia payment asset are selected for a deployment environment.
+A future real adapter should be added beside `MockPaymentAdapter` after the official package APIs, facilitator configuration, and Base payment asset are selected for a deployment environment.
 
 ## AI Provider Design
 
@@ -138,9 +138,21 @@ struct Receipt {
 
 `recordReceipt` is permissionless. The caller is stored as `requester`. Duplicate `taskId` values revert.
 
+## Base Mainnet
+
+Current production target:
+
+- Network: Base Mainnet
+- Chain ID: `8453`
+- RPC example: `https://mainnet.base.org`
+- Deployed `AgentTaskReceipt`: [`0x89365D56D7a8795e141e2e6Cf50Fc6015d988be2`](https://basescan.org/address/0x89365D56D7a8795e141e2e6Cf50Fc6015d988be2)
+- Contract verification: `Pass - Verified`
+
+The smart contract is real on Base Mainnet. Receipt writes from the frontend are real Base Mainnet transactions signed interactively by the connected wallet. The x402 payment layer remains `MOCK`, and the AI provider remains `MOCK`.
+
 ## Base Sepolia
 
-Default local target:
+Retained testnet target:
 
 - Network: Base Sepolia
 - Chain ID: `84532`
@@ -150,7 +162,7 @@ Default local target:
 - First successful onchain receipt transaction: [`0x554fdcc6ded1c913bc959a02fff885269724787d4da2fe0353873ec56ec69915`](https://sepolia.basescan.org/tx/0x554fdcc6ded1c913bc959a02fff885269724787d4da2fe0353873ec56ec69915)
 - Current receipt count: `1`
 
-The smart contract is real on Base Sepolia. Receipt writes from the frontend are real Base Sepolia transactions signed interactively by the connected wallet. The x402 payment layer remains `MOCK`, the AI provider remains `MOCK`, and Base Mainnet is not configured or used.
+The Base Sepolia deployment is retained for reference and local testnet configuration.
 
 ## Builder Attribution
 
@@ -158,7 +170,7 @@ Builder Code: `bc_tuybnhw2`
 
 ERC-8021 attribution is enabled for future frontend receipt writes. The frontend wallet client appends the Builder Code attribution suffix to transaction calldata automatically, so no smart contract change is required. Existing historical transactions are not retroactively attributed.
 
-The x402 payment remains `MOCK`, AI remains `MOCK`, and receipt writes remain real, interactively confirmed Base Sepolia transactions.
+The x402 payment remains `MOCK`, AI remains `MOCK`, and receipt writes remain real, interactively confirmed transactions on the configured Base network.
 
 ## Security Model
 
@@ -192,14 +204,21 @@ Root `.env.example`:
 
 ```text
 BASE_SEPOLIA_RPC_URL=https://base-sepolia-rpc.publicnode.com
+BASE_CHAIN_ID=8453
+BASE_MAINNET_RPC_URL=https://mainnet.base.org
 X402_MODE=mock
 MOCK_PAYMENT_RECIPIENT=0x0000000000000000000000000000000000004020
 MOCK_PAYMENT_ASSET=mock-USDC
 MOCK_PAYMENT_AMOUNT=0.01
 
-VITE_CHAIN_ID=84532
+VITE_CHAIN_ID=8453
+VITE_RPC_URL=https://mainnet.base.org
+VITE_BASE_MAINNET_RPC_URL=https://mainnet.base.org
+VITE_BASE_MAINNET_CONTRACT_ADDRESS=0x89365D56D7a8795e141e2e6Cf50Fc6015d988be2
+VITE_CONTRACT_ADDRESS=0x89365D56D7a8795e141e2e6Cf50Fc6015d988be2
+VITE_RECEIPT_CONTRACT_ADDRESS=0x89365D56D7a8795e141e2e6Cf50Fc6015d988be2
 VITE_BASE_SEPOLIA_RPC_URL=https://base-sepolia-rpc.publicnode.com
-VITE_RECEIPT_CONTRACT_ADDRESS=0x2C1bBa87705eE87465c6da9B00fC941f4557c241
+VITE_BASE_SEPOLIA_RECEIPT_CONTRACT_ADDRESS=0x2C1bBa87705eE87465c6da9B00fC941f4557c241
 VITE_API_URL=/api/task
 ```
 
@@ -245,9 +264,9 @@ npm run api:test
 ## Future Plan
 
 1. Select the official `@x402/*` server and client packages for the target runtime.
-2. Configure a real Base Sepolia payment asset, recipient, and facilitator.
+2. Configure a real Base payment asset, recipient, and facilitator.
 3. Add a non-mock `PaymentAdapter` that verifies payments server-side.
-4. Keep receipt writes on Base Sepolia until a separate mainnet review is completed.
+4. Keep x402 in mock mode until a separate live-payment review is completed.
 5. Re-run tests and perform a separate deployment review before any production payment work.
 
 No new deployment work is performed by the local app.

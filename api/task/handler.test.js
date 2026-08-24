@@ -8,7 +8,7 @@ import { createTaskReceiptPayload, sha256Hex } from "./hash.js";
 
 const requestBody = {
   taskType: "summarize",
-  input: "Pay an agent, get a deterministic local result, and prove the task later on Base Sepolia.",
+  input: "Pay an agent, get a deterministic local result, and prove the task later on Base Mainnet.",
 };
 
 test("unpaid request returns payment required", async () => {
@@ -17,7 +17,7 @@ test("unpaid request returns payment required", async () => {
   assert.equal(response.statusCode, 402);
   assert.equal(response.body.code, "PAYMENT_REQUIRED");
   assert.equal(response.body.mode, "mock");
-  assert.equal(response.body.network.chainId, 84532);
+  assert.equal(response.body.network.chainId, 8453);
   assert.ok(response.body.mockPaymentHeader.startsWith("mock."));
 });
 
@@ -131,4 +131,3 @@ async function callTask(body, headers = {}) {
     body: rawBody.length > 0 ? JSON.parse(rawBody) : undefined,
   };
 }
-

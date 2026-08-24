@@ -1,4 +1,4 @@
-import { BASE_SEPOLIA, MOCK_PAYMENT, PAYMENT_HEADER } from "./constants.js";
+import { BASE_NETWORK, MOCK_PAYMENT, PAYMENT_HEADER } from "./constants.js";
 import { sha256Hex, stableStringify } from "./hash.js";
 
 const MOCK_SIGNATURE_SALT = "base-agent-pay-local-mock-v1";
@@ -24,10 +24,10 @@ export class MockPaymentAdapter extends PaymentAdapter {
       mode: "mock",
       x402Version: "2",
       network: {
-        name: BASE_SEPOLIA.name,
-        chainId: BASE_SEPOLIA.chainId,
-        caip2: BASE_SEPOLIA.caip2,
-        rpcUrl: BASE_SEPOLIA.rpcUrl,
+        name: BASE_NETWORK.name,
+        chainId: BASE_NETWORK.chainId,
+        caip2: BASE_NETWORK.caip2,
+        rpcUrl: BASE_NETWORK.rpcUrl,
       },
       accepts: [requirement],
       paymentRequirements: requirement,
@@ -64,7 +64,7 @@ export class MockPaymentAdapter extends PaymentAdapter {
       };
     }
 
-    if (claim.mode !== "mock" || claim.network.chainId !== BASE_SEPOLIA.chainId) {
+    if (claim.mode !== "mock" || claim.network.chainId !== BASE_NETWORK.chainId) {
       return {
         ok: false,
         code: "PAYMENT_INVALID",
@@ -107,10 +107,10 @@ export function createMockPaymentRequirement(requestHash) {
     scheme: MOCK_PAYMENT.scheme,
     description: MOCK_PAYMENT.description,
     network: {
-      name: BASE_SEPOLIA.name,
-      chainId: BASE_SEPOLIA.chainId,
-      caip2: BASE_SEPOLIA.caip2,
-      rpcUrl: BASE_SEPOLIA.rpcUrl,
+      name: BASE_NETWORK.name,
+      chainId: BASE_NETWORK.chainId,
+      caip2: BASE_NETWORK.caip2,
+      rpcUrl: BASE_NETWORK.rpcUrl,
     },
     asset: {
       symbol: MOCK_PAYMENT.assetSymbol,
@@ -178,4 +178,3 @@ function base64UrlDecode(value) {
     "utf8",
   );
 }
-

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Local Base Sepolia x402-style AI task payment demo with an optional receipt registry.",
+  "description": "Base x402-style mock AI task payment demo with an optional receipt registry.",
   "workspaces": [
     "frontend"
   ],
@@ -21,4 +21,3 @@
     "node": ">=20"
   }
 }
-

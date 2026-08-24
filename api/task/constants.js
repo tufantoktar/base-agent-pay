@@ -1,3 +1,15 @@
+export const BASE_MAINNET = Object.freeze({
+  chainId: 8453,
+  chainIdHex: "0x2105",
+  caip2: "eip155:8453",
+  name: "Base Mainnet",
+  rpcUrl:
+    process.env.BASE_MAINNET_RPC_URL ??
+    process.env.BASE_RPC_URL ??
+    "https://mainnet.base.org",
+  blockExplorerUrl: "https://basescan.org",
+});
+
 export const BASE_SEPOLIA = Object.freeze({
   chainId: 84532,
   chainIdHex: "0x14a34",
@@ -8,6 +20,14 @@ export const BASE_SEPOLIA = Object.freeze({
     "https://base-sepolia-rpc.publicnode.com",
   blockExplorerUrl: "https://sepolia.basescan.org",
 });
+
+const TARGET_CHAIN_ID = Number(
+  process.env.BASE_CHAIN_ID ?? process.env.CHAIN_ID ?? BASE_MAINNET.chainId,
+);
+
+export const BASE_NETWORK = Object.freeze(
+  TARGET_CHAIN_ID === BASE_SEPOLIA.chainId ? BASE_SEPOLIA : BASE_MAINNET,
+);
 
 export const MOCK_PAYMENT = Object.freeze({
   mode: "mock",
@@ -20,9 +40,9 @@ export const MOCK_PAYMENT = Object.freeze({
     "0x0000000000000000000000000000000000004020",
   facilitator: "local-mock-facilitator",
   description:
-    "Development-only mock payment requirement for a Base Sepolia AI task.",
+    process.env.MOCK_PAYMENT_DESCRIPTION ??
+    `Development-only mock payment requirement for a ${BASE_NETWORK.name} AI task.`,
 });
 
 export const PAYMENT_HEADER = "x-payment";
 export const PAYMENT_RESPONSE_HEADER = "X-PAYMENT-RESPONSE";
-

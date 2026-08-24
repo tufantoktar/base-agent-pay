@@ -4,9 +4,9 @@ import { isAddress } from "viem";
 import { requestPaymentRequirement, submitMockPaidTask } from "./apiClient.js";
 import { BASE_BUILDER_CODE } from "./builderAttribution.js";
 import {
-  BASE_SEPOLIA,
-  BASE_SEPOLIA_EXPLORER_URL,
-  BASE_SEPOLIA_HEX_CHAIN_ID,
+  BASE_NETWORK,
+  BASE_NETWORK_EXPLORER_URL,
+  BASE_NETWORK_HEX_CHAIN_ID,
   RECEIPT_CONTRACT_ADDRESS,
   publicClient,
 } from "./config.js";
@@ -18,7 +18,7 @@ import {
 import {
   connectWallet,
   discoverWallets,
-  requestBaseSepolia,
+  requestBaseNetwork,
   shortAddress,
 } from "./walletDiscovery.js";
 
@@ -50,7 +50,7 @@ const RECEIPT_STATUS = {
 export default function App() {
   const [taskType, setTaskType] = useState("summarize");
   const [input, setInput] = useState(
-    "Base Agent Pay lets a user request a small AI task, complete an x402-style payment flow on Base Sepolia, and optionally record a task receipt onchain.",
+    "Base Agent Pay lets a user request a small AI task, complete an x402-style mock payment flow, and optionally record a task receipt on Base Mainnet.",
   );
   const [paymentStatus, setPaymentStatus] = useState("idle");
   const [paymentRequirement, setPaymentRequirement] = useState(null);
@@ -82,24 +82,24 @@ export default function App() {
     taskResult?.taskId && taskResult?.requestHash && taskResult?.resultHash,
   );
   const walletConnected = Boolean(walletState.address);
-  const walletOnBaseSepolia =
-    walletState.chainId?.toLowerCase() === BASE_SEPOLIA_HEX_CHAIN_ID;
+  const walletOnBaseNetwork =
+    walletState.chainId?.toLowerCase() === BASE_NETWORK_HEX_CHAIN_ID;
   const receiptWritePending =
     receiptState.status === "confirming" || receiptState.status === "pending";
   const canRecordReceipt = Boolean(
     hasReceiptPayload &&
       selectedWallet &&
       walletConnected &&
-      walletOnBaseSepolia &&
+      walletOnBaseNetwork &&
       receiptAddressConfigured &&
       receiptState.isRecorded === false &&
       !receiptWritePending,
   );
   const contractExplorerUrl = receiptAddressConfigured
-    ? `${BASE_SEPOLIA_EXPLORER_URL}/address/${RECEIPT_CONTRACT_ADDRESS}`
+    ? `${BASE_NETWORK_EXPLORER_URL}/address/${RECEIPT_CONTRACT_ADDRESS}`
     : "";
   const txExplorerUrl = receiptState.txHash
-    ? `${BASE_SEPOLIA_EXPLORER_URL}/tx/${receiptState.txHash}`
+    ? `${BASE_NETWORK_EXPLORER_URL}/tx/${receiptState.txHash}`
     : "";
 
   useEffect(() => discoverWallets(setWallets), []);
@@ -216,7 +216,7 @@ export default function App() {
 
       setReceiptState({
         status: "ready",
-        message: "Checking Base Sepolia for an existing receipt.",
+        message: `Checking ${BASE_NETWORK.name} for an existing receipt.`,
         txHash: "",
         receipt: null,
         isRecorded: null,
@@ -231,7 +231,7 @@ export default function App() {
         if (receiptStatus.isRecorded) {
           setReceiptState({
             status: "already",
-            message: "Receipt already recorded on Base Sepolia.",
+            message: `Receipt already recorded on ${BASE_NETWORK.name}.`,
             txHash: "",
             receipt: receiptStatus.receipt,
             isRecorded: true,
@@ -241,7 +241,7 @@ export default function App() {
 
         setReceiptState({
           status: "ready",
-          message: "Ready to record on Base Sepolia with your connected wallet.",
+          message: `Ready to record on ${BASE_NETWORK.name} with your connected wallet.`,
           txHash: "",
           receipt: null,
           isRecorded: false,
@@ -343,7 +343,7 @@ export default function App() {
 
     setError("");
     try {
-      await requestBaseSepolia(selectedWallet);
+      await requestBaseNetwork(selectedWallet);
       const nextWalletState = await connectWallet(selectedWallet);
       setWalletState(nextWalletState);
     } catch (switchError) {
@@ -387,10 +387,10 @@ export default function App() {
       return;
     }
 
-    if (!walletOnBaseSepolia) {
+    if (!walletOnBaseNetwork) {
       setReceiptState({
         status: "failed",
-        message: "Switch your wallet to Base Sepolia before recording.",
+        message: `Switch your wallet to ${BASE_NETWORK.name} before recording.`,
         txHash: "",
         receipt: null,
         isRecorded: false,
@@ -444,7 +444,7 @@ export default function App() {
 
       setReceiptState({
         status: "pending",
-        message: "Transaction submitted. Waiting for Base Sepolia confirmation.",
+        message: `Transaction submitted. Waiting for ${BASE_NETWORK.name} confirmation.`,
         txHash,
         receipt: null,
         isRecorded: false,
@@ -455,7 +455,7 @@ export default function App() {
       });
 
       if (txReceipt.status !== "success") {
-        throw new Error("Receipt transaction reverted on Base Sepolia.");
+        throw new Error(`Receipt transaction reverted on ${BASE_NETWORK.name}.`);
       }
 
       const afterWrite = await readReceiptStatus(taskResult.taskId);
@@ -465,7 +465,7 @@ export default function App() {
 
       setReceiptState({
         status: "recorded",
-        message: "Receipt recorded on Base Sepolia.",
+        message: `Receipt recorded on ${BASE_NETWORK.name}.`,
         txHash,
         receipt: afterWrite.receipt,
         isRecorded: true,
@@ -507,14 +507,14 @@ export default function App() {
     <main className="app-shell">
       <header className="app-header">
         <div>
-          <p className="eyebrow">Base Sepolia target</p>
+          <p className="eyebrow">{BASE_NETWORK.name} target</p>
           <h1>Base Agent Pay</h1>
           <p className="subtitle">Pay an agent. Get a result. Prove it onchain.</p>
         </div>
         <div className="network-panel" aria-label="Network status">
           <span>Network</span>
-          <strong>Base Sepolia</strong>
-          <small>Chain ID {BASE_SEPOLIA.id}</small>
+          <strong>{BASE_NETWORK.name}</strong>
+          <small>Chain ID {BASE_NETWORK.id}</small>
           <small>RPC {rpcStatus}</small>
         </div>
       </header>
@@ -548,13 +548,13 @@ export default function App() {
           onClick={handleSwitchNetwork}
           disabled={!selectedWallet}
         >
-          Use Base Sepolia
+          Use {BASE_NETWORK.name}
         </button>
         <div className="wallet-state">
           <span>{walletState.address ? shortAddress(walletState.address) : "Not connected"}</span>
           <small>
-            {walletState.chainId === BASE_SEPOLIA_HEX_CHAIN_ID
-              ? "Base Sepolia"
+            {walletState.chainId === BASE_NETWORK_HEX_CHAIN_ID
+              ? BASE_NETWORK.name
               : walletState.chainId || "No chain"}
           </small>
         </div>
@@ -619,7 +619,7 @@ export default function App() {
           <dl className="facts">
             <div>
               <dt>Network</dt>
-              <dd>Base Sepolia</dd>
+              <dd>{BASE_NETWORK.name}</dd>
             </div>
             <div>
               <dt>Asset</dt>
@@ -739,7 +739,7 @@ export default function App() {
             Record Receipt Onchain
           </button>
           <small className="proof-note">
-            Receipt writes are real Base Sepolia transactions and must be confirmed
+            Receipt writes are real {BASE_NETWORK.name} transactions and must be confirmed
             interactively in your injected wallet.
           </small>
           <small className="proof-note">
@@ -800,11 +800,11 @@ function toReceiptErrorMessage(error) {
   }
 
   if (/revert/iu.test(message)) {
-    return "Receipt transaction reverted on Base Sepolia.";
+    return `Receipt transaction reverted on ${BASE_NETWORK.name}.`;
   }
 
   if (/network|rpc|fetch|timeout/iu.test(message)) {
-    return "Base Sepolia RPC error. Check the network and try again.";
+    return `${BASE_NETWORK.name} RPC error. Check the network and try again.`;
   }
 
   return message || "Receipt recording failed.";

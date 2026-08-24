@@ -1,7 +1,7 @@
 import { createWalletClient, custom, getAddress } from "viem";
 
 import {
-  BASE_SEPOLIA,
+  BASE_NETWORK,
   RECEIPT_CONTRACT_ADDRESS,
   publicClient,
 } from "./config.js";
@@ -91,7 +91,7 @@ export async function recordReceipt({
 }) {
   const walletClient = createWalletClient({
     account: getAddress(account),
-    chain: BASE_SEPOLIA,
+    chain: BASE_NETWORK,
     transport: custom(provider),
     dataSuffix: BUILDER_DATA_SUFFIX,
   });

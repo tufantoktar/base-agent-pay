@@ -1,4 +1,4 @@
-import { BASE_SEPOLIA, BASE_SEPOLIA_HEX_CHAIN_ID } from "./config.js";
+import { BASE_NETWORK, BASE_NETWORK_HEX_CHAIN_ID } from "./config.js";
 
 export function discoverWallets(onChange) {
   const providers = new Map();
@@ -64,11 +64,11 @@ export async function connectWallet(wallet) {
   };
 }
 
-export async function requestBaseSepolia(wallet) {
+export async function requestBaseNetwork(wallet) {
   try {
     await wallet.provider.request({
       method: "wallet_switchEthereumChain",
-      params: [{ chainId: BASE_SEPOLIA_HEX_CHAIN_ID }],
+      params: [{ chainId: BASE_NETWORK_HEX_CHAIN_ID }],
     });
   } catch (error) {
     if (error?.code !== 4902) {
@@ -79,11 +79,11 @@ export async function requestBaseSepolia(wallet) {
       method: "wallet_addEthereumChain",
       params: [
         {
-          chainId: BASE_SEPOLIA_HEX_CHAIN_ID,
-          chainName: BASE_SEPOLIA.name,
-          nativeCurrency: BASE_SEPOLIA.nativeCurrency,
-          rpcUrls: BASE_SEPOLIA.rpcUrls.default.http,
-          blockExplorerUrls: [BASE_SEPOLIA.blockExplorers.default.url],
+          chainId: BASE_NETWORK_HEX_CHAIN_ID,
+          chainName: BASE_NETWORK.name,
+          nativeCurrency: BASE_NETWORK.nativeCurrency,
+          rpcUrls: BASE_NETWORK.rpcUrls.default.http,
+          blockExplorerUrls: [BASE_NETWORK.blockExplorers.default.url],
         },
       ],
     });
@@ -109,4 +109,3 @@ function sortWallets(wallets) {
     return a.name.localeCompare(b.name);
   });
 }
-
