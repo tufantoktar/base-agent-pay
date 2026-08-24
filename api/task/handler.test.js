@@ -5,10 +5,23 @@ import { Readable } from "node:stream";
 import { MockAiProvider } from "./ai-provider.js";
 import { handleTaskRequest } from "./handler.js";
 import { createTaskReceiptPayload, sha256Hex } from "./hash.js";
+import { MANDATE_CODES } from "./mandate.js";
 
 const requestBody = {
   taskType: "summarize",
   input: "Pay an agent, get a deterministic local result, and prove the task later on Base Mainnet.",
+  scope: "summarize",
+  counterparty: "base-agent-pay",
+  amount: "0.01",
+  currency: "USDC",
+  mandate: {
+    mandateId: "mandate-api-test",
+    maxSpendPerTask: "0.10",
+    currency: "USDC",
+    allowedCounterparties: ["base-agent-pay"],
+    expiresAt: "2026-08-25T12:00:00.000Z",
+    allowedScopes: ["summarize"],
+  },
 };
 
 test("unpaid request returns payment required", async () => {
@@ -41,6 +54,110 @@ test("invalid payment is rejected", async () => {
   assert.equal(response.statusCode, 402);
   assert.equal(response.body.code, "PAYMENT_REQUIRED");
   assert.match(response.body.reason, /invalid/i);
+});
+
+test("missing mandate is rejected before payment", async () => {
+  const calls = {
+    paymentVerify: 0,
+    paymentChallenge: 0,
+    aiRun: 0,
+    receipt: 0,
+  };
+  const response = await callTask(
+    {
+      taskType: "summarize",
+      input: "No mandate should fail closed.",
+      scope: "summarize",
+      counterparty: "base-agent-pay",
+      amount: "0.01",
+      currency: "USDC",
+    },
+    {},
+    {
+      paymentAdapter: {
+        verifyPayment() {
+          calls.paymentVerify += 1;
+          return { ok: false };
+        },
+        createPaymentRequired() {
+          calls.paymentChallenge += 1;
+          return {};
+        },
+      },
+      aiProvider: {
+        async run() {
+          calls.aiRun += 1;
+          return {};
+        },
+      },
+      createReceiptPayload() {
+        calls.receipt += 1;
+        return {};
+      },
+    },
+  );
+
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.body.error, MANDATE_CODES.MISSING);
+  assert.deepEqual(calls, {
+    paymentVerify: 0,
+    paymentChallenge: 0,
+    aiRun: 0,
+    receipt: 0,
+  });
+});
+
+test("mandate evaluator errors fail closed before downstream calls", async () => {
+  const calls = {
+    paymentVerify: 0,
+    aiRun: 0,
+    receipt: 0,
+  };
+  const response = await callTask(requestBody, {}, {
+    evaluateMandate() {
+      throw new Error("unknown policy state");
+    },
+    paymentAdapter: {
+      verifyPayment() {
+        calls.paymentVerify += 1;
+        return { ok: false };
+      },
+    },
+    aiProvider: {
+      async run() {
+        calls.aiRun += 1;
+        return {};
+      },
+    },
+    createReceiptPayload() {
+      calls.receipt += 1;
+      return {};
+    },
+  });
+
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.body.error, MANDATE_CODES.INTERNAL_ERROR);
+  assert.deepEqual(calls, {
+    paymentVerify: 0,
+    aiRun: 0,
+    receipt: 0,
+  });
+});
+
+test("unknown mandate evaluator state fails closed", async () => {
+  const response = await callTask(requestBody, {}, {
+    evaluateMandate() {
+      return null;
+    },
+    paymentAdapter: {
+      verifyPayment() {
+        throw new Error("payment adapter must not be called");
+      },
+    },
+  });
+
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.body.error, MANDATE_CODES.INTERNAL_ERROR);
 });
 
 test("mock AI provider is deterministic", async () => {
@@ -98,7 +215,7 @@ test("request and result hashes are bytes32 hex strings", () => {
   );
 });
 
-async function callTask(body, headers = {}) {
+async function callTask(body, headers = {}, options = {}) {
   const req = Readable.from([JSON.stringify(body)]);
   req.method = "POST";
   req.headers = {
@@ -122,6 +239,8 @@ async function callTask(body, headers = {}) {
 
   await handleTaskRequest(req, res, {
     now: "2026-08-22T00:00:00.000Z",
+    mandateLogger: () => {},
+    ...options,
   });
 
   const rawBody = Buffer.concat(chunks).toString("utf8");

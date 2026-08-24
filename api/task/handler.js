@@ -1,6 +1,7 @@
 import { MockAiProvider, normalizeInput, normalizeTaskType } from "./ai-provider.js";
 import { PAYMENT_RESPONSE_HEADER } from "./constants.js";
 import { createTaskReceiptPayload, sha256Hex } from "./hash.js";
+import { evaluateMandate, MANDATE_CODES } from "./mandate.js";
 import { getPaymentAdapter } from "./payment-adapter.js";
 
 export async function handleTaskRequest(req, res, options = {}) {
@@ -38,6 +39,23 @@ export async function handleTaskRequest(req, res, options = {}) {
     });
   }
 
+  const mandateDecision = evaluateRequestMandate({
+    evaluator: options.evaluateMandate ?? evaluateMandate,
+    request,
+    mandate: request.mandate,
+    now: options.now,
+  });
+  logMandateEvents(options.mandateLogger ?? console.info, mandateDecision, request);
+
+  if (!mandateDecision.allowed) {
+    return sendJson(res, 403, {
+      ok: false,
+      error: mandateDecision.code,
+      message: mandateDecision.reason,
+      mandateDecision,
+    });
+  }
+
   const requestHash = sha256Hex(request);
   const paymentAdapter = options.paymentAdapter ?? getPaymentAdapter();
   const verification = paymentAdapter.verifyPayment({
@@ -66,7 +84,8 @@ export async function handleTaskRequest(req, res, options = {}) {
 
   const aiProvider = options.aiProvider ?? new MockAiProvider();
   const result = await aiProvider.run(request);
-  const receipt = createTaskReceiptPayload({
+  const createReceiptPayload = options.createReceiptPayload ?? createTaskReceiptPayload;
+  const receipt = createReceiptPayload({
     request,
     result,
     payment: verification.payment,
@@ -114,6 +133,10 @@ export async function handleTaskRequest(req, res, options = {}) {
 export function normalizeTaskRequest(body) {
   const taskType = normalizeTaskType(body?.taskType);
   const input = normalizeInput(body?.input);
+  const scope = normalizePolicyText(body?.scope);
+  const counterparty = normalizePolicyText(body?.counterparty);
+  const amount = normalizePolicyText(body?.amount);
+  const currency = normalizePolicyText(body?.currency);
 
   if (input.length < 1) {
     throw new Error("Task input is required.");
@@ -123,7 +146,73 @@ export function normalizeTaskRequest(body) {
     throw new Error("Task input must be 2,000 characters or less.");
   }
 
-  return { taskType, input };
+  return {
+    taskType,
+    input,
+    scope,
+    counterparty,
+    amount,
+    currency,
+    mandate: body?.mandate,
+  };
+}
+
+function evaluateRequestMandate({ evaluator, request, mandate, now }) {
+  try {
+    const decision = evaluator({ request, mandate, now });
+    if (
+      !decision ||
+      typeof decision.allowed !== "boolean" ||
+      typeof decision.code !== "string"
+    ) {
+      return {
+        allowed: false,
+        code: MANDATE_CODES.INTERNAL_ERROR,
+        reason: "Mandate evaluation returned an unknown policy state.",
+      };
+    }
+    return decision;
+  } catch {
+    return {
+      allowed: false,
+      code: MANDATE_CODES.INTERNAL_ERROR,
+      reason: "Mandate evaluation failed closed.",
+    };
+  }
+}
+
+function logMandateEvents(logger, decision, request) {
+  if (typeof logger !== "function") {
+    return;
+  }
+
+  const event = {
+    mandateId:
+      typeof request?.mandate?.mandateId === "string"
+        ? request.mandate.mandateId.trim()
+        : "",
+    scope: request?.scope ?? "",
+    counterparty: request?.counterparty ?? "",
+    requestedAmount:
+      request?.amount && request?.currency
+        ? `${request.amount} ${request.currency}`
+        : request?.amount ?? "",
+    decisionCode: decision.code,
+  };
+
+  try {
+    logger({ event: "mandate_evaluated", ...event });
+    logger({
+      event: decision.allowed ? "mandate_allowed" : "mandate_denied",
+      ...event,
+    });
+  } catch {
+    // Mandate logging is best-effort and must not affect policy enforcement.
+  }
+}
+
+function normalizePolicyText(value) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 async function readJsonBody(req) {
@@ -173,4 +262,3 @@ function setHeader(res, name, value) {
     res.setHeader(name, value);
   }
 }
-

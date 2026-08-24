@@ -15,6 +15,8 @@ React/Vite
  ↓
 Task API
  ↓
+Mandate v1 Policy
+ ↓
 x402 Payment Layer
  ↓
 Payment Verification
@@ -80,6 +82,55 @@ The mock adapter is intentionally not a real x402 implementation:
 - It marks every response as `mode: "mock"`.
 
 A future real adapter should be added beside `MockPaymentAdapter` after the official package APIs, facilitator configuration, and Base payment asset are selected for a deployment environment.
+
+## Mandate v1
+
+Receipts explain what happened. Mandates prevent disallowed execution before payment.
+
+Mandate v1 is an application-level pre-execution policy layer. The API evaluates the mandate before the mock x402 payment adapter, before AI execution, and before any receipt payload can be produced. If mandate evaluation denies the request, the API returns `403` and stops.
+
+Mandate v1 controls:
+
+- `maxSpendPerTask`: maximum requested spend per task.
+- `allowedCounterparties`: exact service/counterparty allowlist.
+- `expiresAt`: UTC timestamp. If `now >= expiresAt`, the request is denied.
+- `allowedScopes`: exact allowed task scopes.
+
+Spend policy uses USDC atomic units with 6 decimals. For example, `0.50 USDC` is evaluated as `500000` atomic units. JavaScript floating-point arithmetic is not used for spend comparisons.
+
+Mandate evaluation is deterministic and fail-closed:
+
+```text
+presence
+structure
+expiry
+currency
+amount
+counterparty
+scope
+```
+
+Any missing mandate, malformed mandate, expired mandate, unsupported currency, invalid amount, spend over max, disallowed counterparty, disallowed scope, or internal policy error is denied. The equality boundary is explicit: a requested amount equal to `maxSpendPerTask` is allowed if every other check passes.
+
+The frontend includes a small Mandate panel for the demo request. It shows:
+
+- max spend per task
+- task counterparty and allowed counterparty
+- expiry
+- allowed scope
+- current decision
+
+Client-side mandate validation is only a usability preflight. Server-side API validation remains authoritative.
+
+Mandate v1 does **not**:
+
+- enable live x402
+- configure a facilitator
+- settle USDC
+- sign with a wallet
+- provide cryptographic wallet authorization
+
+`x402` remains `MOCK`.
 
 ## AI Provider Design
 

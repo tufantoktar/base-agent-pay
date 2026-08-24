@@ -11,7 +11,7 @@ export async function requestPaymentRequirement(task) {
   const body = await readJson(response);
 
   if (response.status !== 402) {
-    throw new Error(body?.message ?? "Expected payment requirement.");
+    throw new Error(body?.message ?? body?.error ?? "Expected payment requirement.");
   }
 
   return body;
@@ -39,4 +39,3 @@ async function readJson(response) {
   const text = await response.text();
   return text.length > 0 ? JSON.parse(text) : {};
 }
-

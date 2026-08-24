@@ -16,6 +16,14 @@ import {
   recordReceipt,
 } from "./receiptContract.js";
 import {
+  DEMO_COUNTERPARTY,
+  DEMO_CURRENCY,
+  DEMO_REQUEST_AMOUNT,
+  createDefaultMandate,
+  evaluateMandatePreflight,
+  mandateDecisionMessage,
+} from "./mandatePolicy.js";
+import {
   connectWallet,
   discoverWallets,
   requestBaseNetwork,
@@ -52,6 +60,15 @@ export default function App() {
   const [input, setInput] = useState(
     "Base Agent Pay lets a user request a small AI task, complete an x402-style mock payment flow, and optionally record a task receipt on Base Mainnet.",
   );
+  const [requestedAmount, setRequestedAmount] = useState(DEMO_REQUEST_AMOUNT);
+  const [counterparty, setCounterparty] = useState(DEMO_COUNTERPARTY);
+  const [mandateMaxSpend, setMandateMaxSpend] = useState("0.10");
+  const [mandateCounterparty, setMandateCounterparty] = useState(DEMO_COUNTERPARTY);
+  const [mandateExpiresAt, setMandateExpiresAt] = useState(
+    () => createDefaultMandate({ taskType: "summarize" }).expiresAt,
+  );
+  const [mandateScope, setMandateScope] = useState("summarize");
+  const [paymentRequest, setPaymentRequest] = useState(null);
   const [paymentStatus, setPaymentStatus] = useState("idle");
   const [paymentRequirement, setPaymentRequirement] = useState(null);
   const [taskResult, setTaskResult] = useState(null);
@@ -75,6 +92,59 @@ export default function App() {
     () => wallets.find((wallet) => wallet.id === selectedWalletId) ?? wallets[0],
     [selectedWalletId, wallets],
   );
+  const taskRequest = useMemo(() => {
+    const mandate = {
+      mandateId: `mandate-demo-${taskType}`,
+      maxSpendPerTask: mandateMaxSpend,
+      currency: DEMO_CURRENCY,
+      allowedCounterparties: [mandateCounterparty],
+      expiresAt: mandateExpiresAt,
+      allowedScopes: [mandateScope],
+    };
+
+    return {
+      taskType,
+      input,
+      scope: taskType,
+      counterparty,
+      amount: requestedAmount,
+      currency: DEMO_CURRENCY,
+      mandate,
+    };
+  }, [
+    counterparty,
+    input,
+    mandateCounterparty,
+    mandateExpiresAt,
+    mandateMaxSpend,
+    mandateScope,
+    requestedAmount,
+    taskType,
+  ]);
+  const mandateDecision = useMemo(
+    () => evaluateMandatePreflight({
+      request: taskRequest,
+      mandate: taskRequest.mandate,
+    }),
+    [taskRequest],
+  );
+  const receiptPolicyRequest = paymentRequest ?? taskRequest;
+  const receiptMandateDecision = useMemo(
+    () => evaluateMandatePreflight({
+      request: receiptPolicyRequest,
+      mandate: receiptPolicyRequest.mandate,
+    }),
+    [receiptPolicyRequest],
+  );
+  const mandateSummary = useMemo(
+    () => ({
+      maxSpend: `${taskRequest.mandate.maxSpendPerTask} ${taskRequest.mandate.currency}`,
+      counterparty: taskRequest.mandate.allowedCounterparties[0],
+      scope: taskRequest.mandate.allowedScopes[0],
+      expiresAt: taskRequest.mandate.expiresAt,
+    }),
+    [taskRequest],
+  );
 
   const receiptAddressConfigured =
     RECEIPT_CONTRACT_ADDRESS && isAddress(RECEIPT_CONTRACT_ADDRESS);
@@ -92,6 +162,7 @@ export default function App() {
       walletConnected &&
       walletOnBaseNetwork &&
       receiptAddressConfigured &&
+      receiptMandateDecision.allowed &&
       receiptState.isRecorded === false &&
       !receiptWritePending,
   );
@@ -274,11 +345,17 @@ export default function App() {
     taskResult?.resultHash,
   ]);
 
+  function handleTaskTypeChange(nextTaskType) {
+    setTaskType(nextTaskType);
+    setMandateScope(nextTaskType);
+  }
+
   async function handleRequestTask(event) {
     event.preventDefault();
     setError("");
     setTaskResult(null);
     setPaymentRequirement(null);
+    setPaymentRequest(null);
     setPaymentStatus("idle");
     setReceiptState({
       status: "waiting",
@@ -288,11 +365,15 @@ export default function App() {
       isRecorded: null,
     });
 
+    if (!mandateDecision.allowed) {
+      setError(`Blocked by mandate: ${mandateDecisionMessage(mandateDecision)}`);
+      setPaymentStatus("failed");
+      return;
+    }
+
     try {
-      const requirement = await requestPaymentRequirement({
-        taskType,
-        input,
-      });
+      const requirement = await requestPaymentRequirement(taskRequest);
+      setPaymentRequest(taskRequest);
       setPaymentRequirement(requirement);
       setPaymentStatus("required");
     } catch (requestError) {
@@ -306,11 +387,12 @@ export default function App() {
       return;
     }
 
+    const paidRequest = paymentRequest ?? taskRequest;
     setError("");
     setPaymentStatus("awaiting");
     try {
       const result = await submitMockPaidTask(
-        { taskType, input },
+        paidRequest,
         paymentRequirement.mockPaymentHeader,
       );
       setTaskResult(result);
@@ -353,6 +435,21 @@ export default function App() {
 
   async function handleRecordReceipt() {
     setError("");
+
+    const latestReceiptMandateDecision = evaluateMandatePreflight({
+      request: receiptPolicyRequest,
+      mandate: receiptPolicyRequest.mandate,
+    });
+    if (!latestReceiptMandateDecision.allowed) {
+      setReceiptState({
+        status: "failed",
+        message: `Blocked by mandate: ${mandateDecisionMessage(latestReceiptMandateDecision)}`,
+        txHash: "",
+        receipt: null,
+        isRecorded: false,
+      });
+      return;
+    }
 
     if (!hasReceiptPayload) {
       setReceiptState({
@@ -572,7 +669,7 @@ export default function App() {
             <select
               id="taskType"
               value={taskType}
-              onChange={(event) => setTaskType(event.target.value)}
+              onChange={(event) => handleTaskTypeChange(event.target.value)}
             >
               {TASK_TYPES.map((task) => (
                 <option key={task.value} value={task.value}>
@@ -599,9 +696,102 @@ export default function App() {
           </button>
         </section>
 
-        <section className="panel payment">
+        <section className="panel mandate">
           <div className="section-heading">
             <p>2</p>
+            <h2>Mandate</h2>
+          </div>
+
+          <div
+            className={`status-card status-${mandateDecision.allowed ? "verified" : "failed"}`}
+          >
+            <span>Policy</span>
+            <strong>{mandateDecision.allowed ? "Allowed" : "Blocked"}</strong>
+            <small>{mandateDecision.reason}</small>
+          </div>
+
+          <div className="mandate-grid">
+            <div className="field">
+              <label htmlFor="requestedAmount">Requested spend</label>
+              <input
+                id="requestedAmount"
+                inputMode="decimal"
+                value={requestedAmount}
+                onChange={(event) => setRequestedAmount(event.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="counterparty">Task counterparty</label>
+              <input
+                id="counterparty"
+                value={counterparty}
+                onChange={(event) => setCounterparty(event.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="mandateMaxSpend">Max spend per task</label>
+              <input
+                id="mandateMaxSpend"
+                inputMode="decimal"
+                value={mandateMaxSpend}
+                onChange={(event) => setMandateMaxSpend(event.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="mandateCounterparty">Allowed counterparty</label>
+              <input
+                id="mandateCounterparty"
+                value={mandateCounterparty}
+                onChange={(event) => setMandateCounterparty(event.target.value)}
+              />
+            </div>
+            <div className="field wide">
+              <label htmlFor="mandateExpiresAt">Expires at UTC</label>
+              <input
+                id="mandateExpiresAt"
+                value={mandateExpiresAt}
+                onChange={(event) => setMandateExpiresAt(event.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="mandateScope">Allowed scope</label>
+              <select
+                id="mandateScope"
+                value={mandateScope}
+                onChange={(event) => setMandateScope(event.target.value)}
+              >
+                {TASK_TYPES.map((task) => (
+                  <option key={task.value} value={task.value}>
+                    {task.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <dl className="facts mandate-summary">
+            <div>
+              <dt>Max spend</dt>
+              <dd>{mandateSummary.maxSpend}</dd>
+            </div>
+            <div>
+              <dt>Counterparty</dt>
+              <dd>{mandateSummary.counterparty}</dd>
+            </div>
+            <div>
+              <dt>Scope</dt>
+              <dd>{mandateSummary.scope}</dd>
+            </div>
+            <div>
+              <dt>Expires</dt>
+              <dd>{mandateSummary.expiresAt}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section className="panel payment">
+          <div className="section-heading">
+            <p>3</p>
             <h2>Payment</h2>
           </div>
 
@@ -647,7 +837,7 @@ export default function App() {
 
         <section className="panel result">
           <div className="section-heading">
-            <p>3</p>
+            <p>4</p>
             <h2>Result</h2>
           </div>
 
@@ -673,7 +863,7 @@ export default function App() {
 
         <section className="panel proof">
           <div className="section-heading">
-            <p>4</p>
+            <p>5</p>
             <h2>Onchain Proof</h2>
           </div>
 
