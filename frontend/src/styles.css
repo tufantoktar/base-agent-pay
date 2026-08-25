@@ -164,6 +164,7 @@ h2 {
 
 .network-panel small,
 .mode-card small,
+.payment-note,
 .proof-note,
 .field small {
   color: #667085;
@@ -304,6 +305,7 @@ textarea {
   border-color: #d0d7e2;
 }
 
+.status-preparing,
 .status-required,
 .status-awaiting {
   border-color: #f6c469;
@@ -340,6 +342,24 @@ textarea {
 .mode-card {
   border-color: #c7d8ff;
   background: #f4f8ff;
+}
+
+.live-warning {
+  background: #fff8eb;
+  border: 1px solid #f6c469;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+}
+
+.live-warning strong {
+  color: #7a3e00;
+}
+
+.live-warning small,
+.payment-note {
+  line-height: 1.45;
 }
 
 .facts,

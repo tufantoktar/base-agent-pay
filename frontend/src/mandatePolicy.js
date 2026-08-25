@@ -94,7 +94,7 @@ export function mandateDecisionMessage(decision) {
   return decision?.reason ?? "Mandate blocked this task.";
 }
 
-function parseUsdcAmount(amount) {
+export function parseUsdcAmount(amount) {
   if (typeof amount !== "string") {
     throw new Error("Amount must be a decimal string.");
   }

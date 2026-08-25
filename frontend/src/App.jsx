@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { isAddress } from "viem";
 
-import { requestPaymentRequirement, submitMockPaidTask } from "./apiClient.js";
+import {
+  createTaskIdempotencyKey,
+  requestPaymentRequirement,
+  submitLivePaidTask,
+  submitMockPaidTask,
+} from "./apiClient.js";
 import { BASE_BUILDER_CODE } from "./builderAttribution.js";
 import {
   BASE_NETWORK,
   BASE_NETWORK_EXPLORER_URL,
   BASE_NETWORK_HEX_CHAIN_ID,
+  LIVE_PAYMENT_MAX_USDC,
+  PAYMENT_MODE,
   RECEIPT_CONTRACT_ADDRESS,
   publicClient,
 } from "./config.js";
@@ -29,6 +36,11 @@ import {
   requestBaseNetwork,
   shortAddress,
 } from "./walletDiscovery.js";
+import {
+  createLivePaymentSignatureHeaders,
+  parsePaymentRequiredHeader,
+  validateLivePaymentRequirement,
+} from "./x402Client.js";
 
 const TASK_TYPES = [
   { value: "summarize", label: "Summarize" },
@@ -39,7 +51,9 @@ const TASK_TYPES = [
 
 const PAYMENT_STATUS = {
   idle: "Not requested",
+  preparing: "Preparing payment",
   required: "Payment required",
+  signing: "Awaiting signature",
   awaiting: "Awaiting payment",
   verified: "Payment verified",
   failed: "Failed",
@@ -154,6 +168,14 @@ export default function App() {
   const walletConnected = Boolean(walletState.address);
   const walletOnBaseNetwork =
     walletState.chainId?.toLowerCase() === BASE_NETWORK_HEX_CHAIN_ID;
+  const isLivePaymentMode = PAYMENT_MODE === "live";
+  const livePaymentRequirements = isLivePaymentMode
+    ? paymentRequirement?.accepts?.[0]
+    : null;
+  const paymentRequestInFlight =
+    paymentStatus === "preparing" ||
+    paymentStatus === "signing" ||
+    paymentStatus === "awaiting";
   const receiptWritePending =
     receiptState.status === "confirming" || receiptState.status === "pending";
   const canRecordReceipt = Boolean(
@@ -352,6 +374,10 @@ export default function App() {
 
   async function handleRequestTask(event) {
     event.preventDefault();
+    if (paymentRequestInFlight) {
+      return;
+    }
+
     setError("");
     setTaskResult(null);
     setPaymentRequirement(null);
@@ -359,21 +385,41 @@ export default function App() {
     setPaymentStatus("idle");
     setReceiptState({
       status: "waiting",
-      message: "Complete a mock-paid task before recording an onchain receipt.",
+      message: "Complete a paid task before recording an onchain receipt.",
       txHash: "",
       receipt: null,
       isRecorded: null,
     });
 
-    if (!mandateDecision.allowed) {
-      setError(`Blocked by mandate: ${mandateDecisionMessage(mandateDecision)}`);
+    const submissionRequest = {
+      ...taskRequest,
+      idempotencyKey: createTaskIdempotencyKey(),
+    };
+    const submissionMandateDecision = evaluateMandatePreflight({
+      request: submissionRequest,
+      mandate: submissionRequest.mandate,
+    });
+
+    if (!submissionMandateDecision.allowed) {
+      setError(
+        `Blocked by mandate: ${mandateDecisionMessage(submissionMandateDecision)}`,
+      );
       setPaymentStatus("failed");
       return;
     }
 
     try {
-      const requirement = await requestPaymentRequirement(taskRequest);
-      setPaymentRequest(taskRequest);
+      setPaymentStatus("preparing");
+      const requirementResponse = await requestPaymentRequirement(submissionRequest);
+      const requirement = isLivePaymentMode
+        ? {
+            ...parsePaymentRequiredHeader(
+              requirementResponse.paymentRequiredHeader,
+            ),
+            paymentRequiredHeader: requirementResponse.paymentRequiredHeader,
+          }
+        : requirementResponse;
+      setPaymentRequest(submissionRequest);
       setPaymentRequirement(requirement);
       setPaymentStatus("required");
     } catch (requestError) {
@@ -383,7 +429,7 @@ export default function App() {
   }
 
   async function handleMockPayment() {
-    if (!paymentRequirement?.mockPaymentHeader) {
+    if (isLivePaymentMode || !paymentRequirement?.mockPaymentHeader) {
       return;
     }
 
@@ -395,6 +441,61 @@ export default function App() {
         paidRequest,
         paymentRequirement.mockPaymentHeader,
       );
+      setTaskResult(result);
+      setPaymentStatus("verified");
+    } catch (paymentError) {
+      setError(paymentError.message);
+      setPaymentStatus("failed");
+    }
+  }
+
+  async function handleLivePayment() {
+    if (!isLivePaymentMode || !paymentRequirement) {
+      return;
+    }
+
+    const paidRequest = paymentRequest ?? taskRequest;
+    setError("");
+
+    if (!selectedWallet) {
+      setError("No injected wallet detected.");
+      setPaymentStatus("failed");
+      return;
+    }
+
+    if (!walletConnected) {
+      setError("Connect your wallet before signing the live payment.");
+      setPaymentStatus("failed");
+      return;
+    }
+
+    if (!walletOnBaseNetwork) {
+      setError(`Switch your wallet to ${BASE_NETWORK.name} before signing.`);
+      setPaymentStatus("failed");
+      return;
+    }
+
+    const liveValidation = validateLivePaymentRequirement({
+      paymentRequired: paymentRequirement,
+      request: paidRequest,
+      liveMaxUsdc: LIVE_PAYMENT_MAX_USDC,
+    });
+    if (!liveValidation.ok) {
+      setError(liveValidation.reason);
+      setPaymentStatus("failed");
+      return;
+    }
+
+    try {
+      setPaymentStatus("signing");
+      const { headers } = await createLivePaymentSignatureHeaders({
+        paymentRequired: paymentRequirement,
+        provider: selectedWallet.provider,
+        account: walletState.address,
+        rpcUrl: BASE_NETWORK.rpcUrls.default.http[0],
+      });
+      setPaymentStatus("awaiting");
+      const result = await submitLivePaidTask(paidRequest, headers);
       setTaskResult(result);
       setPaymentStatus("verified");
     } catch (paymentError) {
@@ -691,9 +792,19 @@ export default function App() {
             <small>{input.length}/2000</small>
           </div>
 
-          <button type="submit" className="primary">
+          <button
+            type="submit"
+            className="primary"
+            disabled={paymentRequestInFlight}
+          >
             Request AI Task
           </button>
+          {isLivePaymentMode ? (
+            <div className="live-warning" role="alert">
+              <strong>This task may spend real USDC.</strong>
+              <small>Maximum allowed: {LIVE_PAYMENT_MAX_USDC} USDC.</small>
+            </div>
+          ) : null}
         </section>
 
         <section className="panel mandate">
@@ -801,9 +912,13 @@ export default function App() {
           </div>
 
           <div className="mode-card">
-            <span>Development Payment Mode</span>
-            <strong>MOCK</strong>
-            <small>No real payment, token transfer, or blockchain transaction.</small>
+            <span>Payment mode</span>
+            <strong>{isLivePaymentMode ? "LIVE" : "MOCK"}</strong>
+            <small>
+              {isLivePaymentMode
+                ? `This task may spend real USDC. Maximum allowed: ${LIVE_PAYMENT_MAX_USDC} USDC.`
+                : "No real payment, token transfer, or blockchain transaction."}
+            </small>
           </div>
 
           <dl className="facts">
@@ -813,26 +928,57 @@ export default function App() {
             </div>
             <div>
               <dt>Asset</dt>
-              <dd>{paymentRequirement?.paymentRequirements?.asset?.symbol ?? "mock-USDC"}</dd>
+              <dd>
+                {livePaymentRequirements?.extra?.name ??
+                  paymentRequirement?.paymentRequirements?.asset?.symbol ??
+                  paymentRequirement?.paymentRequirements?.extra?.name ??
+                  (isLivePaymentMode ? "USDC" : "mock-USDC")}
+              </dd>
             </div>
             <div>
               <dt>Amount</dt>
-              <dd>{paymentRequirement?.paymentRequirements?.amount ?? "0.01"}</dd>
+              <dd>
+                {isLivePaymentMode
+                  ? `${paymentRequest?.amount ?? requestedAmount} USDC`
+                  : paymentRequirement?.paymentRequirements?.amount ?? "0.01"}
+              </dd>
             </div>
             <div>
-              <dt>Facilitator</dt>
-              <dd>{paymentRequirement?.paymentRequirements?.facilitator ?? "local-mock-facilitator"}</dd>
+              <dt>{isLivePaymentMode ? "Payment target" : "Facilitator"}</dt>
+              <dd>
+                {isLivePaymentMode
+                  ? livePaymentRequirements?.payTo ?? "Configured server-side"
+                  : paymentRequirement?.paymentRequirements?.facilitator ??
+                    "local-mock-facilitator"}
+              </dd>
             </div>
           </dl>
 
-          <button
-            type="button"
-            className="primary"
-            onClick={handleMockPayment}
-            disabled={!paymentRequirement || paymentStatus === "awaiting"}
-          >
-            Complete Mock Payment
-          </button>
+          {isLivePaymentMode ? (
+            <>
+              <button
+                type="button"
+                className="primary"
+                onClick={handleLivePayment}
+                disabled={!paymentRequirement || paymentRequestInFlight}
+              >
+                Sign Live Payment
+              </button>
+              <small className="payment-note">
+                Review the wallet EIP-712 request before signing. The app does
+                not auto-sign or auto-pay.
+              </small>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="primary"
+              onClick={handleMockPayment}
+              disabled={!paymentRequirement || paymentStatus === "awaiting"}
+            >
+              Complete Mock Payment
+            </button>
+          )}
         </section>
 
         <section className="panel result">

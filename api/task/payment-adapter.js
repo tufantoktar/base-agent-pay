@@ -1,180 +1,113 @@
-import { BASE_NETWORK, MOCK_PAYMENT, PAYMENT_HEADER } from "./constants.js";
-import { sha256Hex, stableStringify } from "./hash.js";
+import { PaymentAdapter } from "./payment-adapter-base.js";
+import { MockPaymentAdapter } from "./payment-adapter-mock.js";
+import {
+  LIVE_PAYMENT_CODES,
+  LIVE_PAYMENT_STATES,
+  LivePaymentAdapter,
+} from "./payment-adapter-live.js";
 
-const MOCK_SIGNATURE_SALT = "base-agent-pay-local-mock-v1";
+export { PaymentAdapter } from "./payment-adapter-base.js";
+export {
+  MockPaymentAdapter,
+  createMockPaymentHeader,
+  createMockPaymentRequirement,
+} from "./payment-adapter-mock.js";
+export {
+  HttpX402FacilitatorClient,
+  LIVE_PAYMENT_CODES,
+  LIVE_PAYMENT_ID_PATTERN,
+  LIVE_PAYMENT_STATES,
+  LivePaymentAdapter,
+  CDP_X402_FACILITATOR_URL,
+  createLivePaymentRequired,
+  createLivePaymentRequirements,
+  createCdpAuthHeaderFactory,
+  encodePaymentSignatureForTest,
+  parsePaymentSignatureHeader,
+  resolveLivePaymentConfig,
+} from "./payment-adapter-live.js";
+export {
+  PAYMENT_SCHEMA_VERSION,
+  PAYMENT_STATES,
+  PAYMENT_STORE_ERROR_CODES,
+  PaymentStore,
+  PaymentStoreError,
+} from "./payment-store.js";
+export {
+  DEFAULT_PAYMENT_STORE_PATH,
+  SqlitePaymentStore,
+} from "./payment-store-sqlite.js";
+export {
+  DEFAULT_POSTGRES_SCHEMA,
+  PostgresPaymentStore,
+} from "./payment-store-postgres.js";
+export {
+  PAYMENT_STORE_DRIVERS,
+  createDefaultPaymentStore,
+  isProductionLikeRuntime,
+  resolvePaymentStoreDriver,
+} from "./payment-store-factory.js";
 
-export class PaymentAdapter {
+export function getPaymentAdapter({
+  env = process.env,
+  facilitatorClient,
+  paymentStore,
+  idempotencyStore,
+  fetchImpl,
+} = {}) {
+  const mode = normalizeMode(env.X402_MODE);
+
+  if (mode === "mock") {
+    return new MockPaymentAdapter();
+  }
+
+  if (mode === "live") {
+    return new LivePaymentAdapter({
+      env,
+      facilitatorClient,
+      paymentStore,
+      idempotencyStore,
+      fetchImpl,
+    });
+  }
+
+  return new BlockedPaymentAdapter({
+    mode,
+    code: LIVE_PAYMENT_CODES.BLOCKED,
+    reason: "X402_MODE must be mock or live.",
+  });
+}
+
+class BlockedPaymentAdapter extends PaymentAdapter {
+  constructor({ mode, code, reason }) {
+    super({ mode });
+    this.code = code;
+    this.reason = reason;
+  }
+
   createPaymentRequired() {
-    throw new Error("PaymentAdapter.createPaymentRequired must be implemented");
+    return {
+      ok: false,
+      error: this.code,
+      code: this.code,
+      message: this.reason,
+      mode: this.mode,
+      status: LIVE_PAYMENT_STATES.BLOCKED,
+    };
   }
 
   verifyPayment() {
-    throw new Error("PaymentAdapter.verifyPayment must be implemented");
-  }
-}
-
-export class MockPaymentAdapter extends PaymentAdapter {
-  createPaymentRequired({ requestHash }) {
-    const requirement = createMockPaymentRequirement(requestHash);
     return {
-      error: "Payment Required",
-      code: "PAYMENT_REQUIRED",
-      message:
-        "Development Payment Mode: retry with the mock X-PAYMENT header to simulate an x402 payment.",
-      mode: "mock",
-      x402Version: "2",
-      network: {
-        name: BASE_NETWORK.name,
-        chainId: BASE_NETWORK.chainId,
-        caip2: BASE_NETWORK.caip2,
-        rpcUrl: BASE_NETWORK.rpcUrl,
-      },
-      accepts: [requirement],
-      paymentRequirements: requirement,
-      mockPaymentHeader: createMockPaymentHeader(requirement),
-    };
-  }
-
-  verifyPayment({ headers, requestHash }) {
-    const headerValue = readHeader(headers, PAYMENT_HEADER);
-
-    if (!headerValue) {
-      return {
-        ok: false,
-        code: "PAYMENT_REQUIRED",
-        reason: "Missing X-PAYMENT header.",
-      };
-    }
-
-    const parsed = parseMockPaymentHeader(headerValue);
-    if (!parsed.ok) {
-      return {
-        ok: false,
-        code: "PAYMENT_INVALID",
-        reason: parsed.reason,
-      };
-    }
-
-    const { claim } = parsed;
-    if (claim.requestHash !== requestHash) {
-      return {
-        ok: false,
-        code: "PAYMENT_INVALID",
-        reason: "Mock payment was created for a different request hash.",
-      };
-    }
-
-    if (claim.mode !== "mock" || claim.network.chainId !== BASE_NETWORK.chainId) {
-      return {
-        ok: false,
-        code: "PAYMENT_INVALID",
-        reason: "Mock payment network or mode is invalid.",
-      };
-    }
-
-    return {
-      ok: true,
-      payment: {
-        mode: "mock",
-        scheme: claim.scheme,
-        network: claim.network,
-        asset: claim.asset,
-        amount: claim.amount,
-        recipient: claim.recipient,
-        facilitator: claim.facilitator,
-        reference: sha256Hex(headerValue),
-        verifiedAt: new Date().toISOString(),
-      },
+      ok: false,
+      code: this.code,
+      reason: this.reason,
+      statusCode: 403,
+      state: LIVE_PAYMENT_STATES.BLOCKED,
     };
   }
 }
 
-export function getPaymentAdapter() {
-  const mode = process.env.X402_MODE ?? "mock";
-
-  if (mode !== "mock") {
-    throw new Error(
-      "Only X402_MODE=mock is implemented. Add an official x402 adapter before enabling live verification.",
-    );
-  }
-
-  return new MockPaymentAdapter();
-}
-
-export function createMockPaymentRequirement(requestHash) {
-  return {
-    mode: "mock",
-    scheme: MOCK_PAYMENT.scheme,
-    description: MOCK_PAYMENT.description,
-    network: {
-      name: BASE_NETWORK.name,
-      chainId: BASE_NETWORK.chainId,
-      caip2: BASE_NETWORK.caip2,
-      rpcUrl: BASE_NETWORK.rpcUrl,
-    },
-    asset: {
-      symbol: MOCK_PAYMENT.assetSymbol,
-      address: MOCK_PAYMENT.assetAddress,
-    },
-    amount: MOCK_PAYMENT.amount,
-    recipient: MOCK_PAYMENT.recipient,
-    facilitator: MOCK_PAYMENT.facilitator,
-    resource: "/api/task",
-    requestHash,
-  };
-}
-
-export function createMockPaymentHeader(requirement) {
-  const claim = {
-    ...requirement,
-    issuedAt: "mock-static-issued-at",
-  };
-  const payload = base64UrlEncode(stableStringify(claim));
-  const signature = sha256Hex(`${payload}:${MOCK_SIGNATURE_SALT}`).slice(2);
-  return `mock.${payload}.${signature}`;
-}
-
-function parseMockPaymentHeader(headerValue) {
-  const parts = String(headerValue).split(".");
-  if (parts.length !== 3 || parts[0] !== "mock") {
-    return { ok: false, reason: "X-PAYMENT is not a mock payment header." };
-  }
-
-  const [, payload, signature] = parts;
-  const expectedSignature = sha256Hex(`${payload}:${MOCK_SIGNATURE_SALT}`).slice(2);
-  if (signature !== expectedSignature) {
-    return { ok: false, reason: "Mock payment signature is invalid." };
-  }
-
-  try {
-    return {
-      ok: true,
-      claim: JSON.parse(base64UrlDecode(payload)),
-    };
-  } catch {
-    return { ok: false, reason: "Mock payment payload is not valid JSON." };
-  }
-}
-
-function readHeader(headers, name) {
-  if (!headers) {
-    return undefined;
-  }
-
-  return headers[name] ?? headers[name.toLowerCase()] ?? headers[name.toUpperCase()];
-}
-
-function base64UrlEncode(value) {
-  return Buffer.from(value, "utf8")
-    .toString("base64")
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replaceAll("=", "");
-}
-
-function base64UrlDecode(value) {
-  const padded = value.padEnd(value.length + ((4 - (value.length % 4)) % 4), "=");
-  return Buffer.from(padded.replaceAll("-", "+").replaceAll("_", "/"), "base64").toString(
-    "utf8",
-  );
+function normalizeMode(value) {
+  const mode = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return mode || "mock";
 }

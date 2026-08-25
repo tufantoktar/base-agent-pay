@@ -9,7 +9,11 @@ export const DEFAULT_BASE_SEPOLIA_RECEIPT_CONTRACT_ADDRESS =
 
 const BASE_MAINNET_CHAIN_ID = 8453;
 const BASE_SEPOLIA_CHAIN_ID = 84532;
-const TARGET_CHAIN_ID = Number(import.meta.env.VITE_CHAIN_ID ?? BASE_MAINNET_CHAIN_ID);
+export const BASE_MAINNET_CAIP2 = "eip155:8453";
+export const BASE_MAINNET_USDC_ADDRESS =
+  "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const viteEnv = import.meta.env ?? {};
+const TARGET_CHAIN_ID = Number(viteEnv.VITE_CHAIN_ID ?? BASE_MAINNET_CHAIN_ID);
 
 const NETWORK_CONFIG = {
   [BASE_MAINNET_CHAIN_ID]: {
@@ -21,14 +25,14 @@ const NETWORK_CONFIG = {
       symbol: "ETH",
     },
     rpcUrl:
-      import.meta.env.VITE_BASE_MAINNET_RPC_URL ??
-      import.meta.env.VITE_RPC_URL ??
+      viteEnv.VITE_BASE_MAINNET_RPC_URL ??
+      viteEnv.VITE_RPC_URL ??
       "https://mainnet.base.org",
     blockExplorerUrl: BASE_MAINNET_EXPLORER_URL,
     receiptContractAddress:
-      import.meta.env.VITE_BASE_MAINNET_CONTRACT_ADDRESS?.trim() ||
-      import.meta.env.VITE_CONTRACT_ADDRESS?.trim() ||
-      import.meta.env.VITE_RECEIPT_CONTRACT_ADDRESS?.trim() ||
+      viteEnv.VITE_BASE_MAINNET_CONTRACT_ADDRESS?.trim() ||
+      viteEnv.VITE_CONTRACT_ADDRESS?.trim() ||
+      viteEnv.VITE_RECEIPT_CONTRACT_ADDRESS?.trim() ||
       DEFAULT_BASE_MAINNET_RECEIPT_CONTRACT_ADDRESS,
     testnet: false,
   },
@@ -41,12 +45,12 @@ const NETWORK_CONFIG = {
       symbol: "ETH",
     },
     rpcUrl:
-      import.meta.env.VITE_BASE_SEPOLIA_RPC_URL ??
+      viteEnv.VITE_BASE_SEPOLIA_RPC_URL ??
       "https://base-sepolia-rpc.publicnode.com",
     blockExplorerUrl: BASE_SEPOLIA_EXPLORER_URL,
     receiptContractAddress:
-      import.meta.env.VITE_BASE_SEPOLIA_RECEIPT_CONTRACT_ADDRESS?.trim() ||
-      import.meta.env.VITE_RECEIPT_CONTRACT_ADDRESS?.trim() ||
+      viteEnv.VITE_BASE_SEPOLIA_RECEIPT_CONTRACT_ADDRESS?.trim() ||
+      viteEnv.VITE_RECEIPT_CONTRACT_ADDRESS?.trim() ||
       DEFAULT_BASE_SEPOLIA_RECEIPT_CONTRACT_ADDRESS,
     testnet: true,
   },
@@ -76,7 +80,11 @@ export const BASE_NETWORK = defineChain({
 export const BASE_NETWORK_EXPLORER_URL = BASE_NETWORK_CONFIG.blockExplorerUrl;
 export const BASE_NETWORK_HEX_CHAIN_ID = `0x${BASE_NETWORK.id.toString(16)}`;
 export const RECEIPT_CONTRACT_ADDRESS = BASE_NETWORK_CONFIG.receiptContractAddress;
-export const API_URL = import.meta.env.VITE_API_URL ?? "/api/task";
+export const API_URL = viteEnv.VITE_API_URL ?? "/api/task";
+export const PAYMENT_MODE =
+  viteEnv.VITE_X402_MODE?.trim().toLowerCase() === "live" ? "live" : "mock";
+export const LIVE_PAYMENT_MAX_USDC =
+  viteEnv.VITE_X402_MAX_LIVE_PAYMENT_USDC?.trim() || "0.10";
 
 export const publicClient = createPublicClient({
   chain: BASE_NETWORK,

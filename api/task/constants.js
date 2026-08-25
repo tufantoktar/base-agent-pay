@@ -46,3 +46,15 @@ export const MOCK_PAYMENT = Object.freeze({
 
 export const PAYMENT_HEADER = "x-payment";
 export const PAYMENT_RESPONSE_HEADER = "X-PAYMENT-RESPONSE";
+export const X402_PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED";
+export const X402_PAYMENT_SIGNATURE_HEADER = "payment-signature";
+export const X402_PAYMENT_RESPONSE_HEADER = "PAYMENT-RESPONSE";
+
+export const BASE_MAINNET_USDC = Object.freeze({
+  symbol: "USDC",
+  address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  decimals: 6,
+  eip712Name: "USD Coin",
+  eip712Version: "2",
+  transferMethod: "EIP-3009",
+});

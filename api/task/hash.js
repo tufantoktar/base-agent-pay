@@ -29,8 +29,10 @@ export function createTaskReceiptPayload({ request, result, payment, now }) {
     output: result.output,
     metadata: result.metadata,
   });
+  const paymentAudit = createPaymentAudit(payment);
   const taskId = sha256Hex({
     completedAt,
+    paymentAudit,
     paymentReference: payment.reference,
     requestHash,
     resultHash,
@@ -44,3 +46,23 @@ export function createTaskReceiptPayload({ request, result, payment, now }) {
   };
 }
 
+function createPaymentAudit(payment) {
+  if (payment?.mode === "live") {
+    return {
+      mode: payment.mode,
+      status: payment.status,
+      paymentId: payment.paymentId,
+      network: payment.network?.caip2,
+      asset: payment.asset?.address,
+      amount: payment.atomicAmount,
+      currency: payment.currency,
+      counterparty: payment.payee ?? payment.recipient,
+      transactionHash: payment.transactionHash,
+    };
+  }
+
+  return {
+    mode: payment?.mode,
+    reference: payment?.reference,
+  };
+}

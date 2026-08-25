@@ -15,9 +15,16 @@
     "frontend:build": "npm run build --workspace frontend",
     "lint": "npm run frontend:lint",
     "build": "npm run frontend:build",
-    "test": "npm run api:test"
+    "test": "npm run api:test",
+    "api:test:postgres": "node --test api/task/payment-store-postgres.test.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "@coinbase/cdp-sdk": "^1.55.0",
+    "@x402/core": "^2.23.0",
+    "@x402/evm": "^2.23.0",
+    "pg": "^8.23.0"
   }
 }
