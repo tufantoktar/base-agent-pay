@@ -9,14 +9,14 @@
   ],
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "api:dev": "node api/dev-server.js",
-    "api:test": "node --test api/task/*.test.js",
+    "api:dev": "node server/dev-server.js",
+    "api:test": "node --test server/task/*.test.js",
     "frontend:lint": "npm run lint --workspace frontend",
     "frontend:build": "npm run build --workspace frontend",
     "lint": "npm run frontend:lint",
     "build": "npm run frontend:build",
     "test": "npm run api:test",
-    "api:test:postgres": "node --test api/task/payment-store-postgres.test.js"
+    "api:test:postgres": "node --test server/task/payment-store-postgres.test.js"
   },
   "engines": {
     "node": ">=22.5"

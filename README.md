@@ -42,6 +42,8 @@ base-agent-pay/
 │   ├── public/
 │   └── package.json
 ├── api/
+│   └── task.js
+├── server/
 │   └── task/
 ├── README.md
 ├── .env.example
@@ -57,7 +59,7 @@ The API is designed around the x402 HTTP payment model:
 - `POST /api/task` without a valid payment returns `402 Payment Required`.
 - The `402` body describes the active payment requirement.
 - Retrying with a valid payment header executes the task and returns `taskId`, `requestHash`, and `resultHash`.
-- Payment verification and settlement remain server-side in the `api/task/payment-adapter*.js` modules.
+- Payment verification and settlement remain server-side in the `server/task/payment-adapter*.js` modules.
 
 ### Selected Package Direction
 
@@ -100,9 +102,9 @@ If `X402_MODE=live` is set without the confirmation flag, CDP x402 facilitator U
 The live adapter lives beside the mock adapter:
 
 ```text
-api/task/payment-adapter.js
-api/task/payment-adapter-mock.js
-api/task/payment-adapter-live.js
+server/task/payment-adapter.js
+server/task/payment-adapter-mock.js
+server/task/payment-adapter-live.js
 ```
 
 Live x402 uses:
@@ -282,7 +284,7 @@ Mandate v1 is application-level policy. Live x402 may move real funds when expli
 
 ## AI Provider Design
 
-The API uses an `AiProvider` abstraction in `api/task/ai-provider.js`.
+The API uses an `AiProvider` abstraction in `server/task/ai-provider.js`.
 
 Current implementation:
 

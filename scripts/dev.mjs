@@ -45,7 +45,7 @@ function shutdown(code = 0) {
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
-run("api", "node", ["api/dev-server.js"], {
+run("api", "node", ["server/dev-server.js"], {
   PORT: process.env.PORT ?? "8787",
 });
 
@@ -57,4 +57,3 @@ run(
     VITE_API_URL: process.env.VITE_API_URL ?? "http://127.0.0.1:8787/api/task",
   },
 );
-
