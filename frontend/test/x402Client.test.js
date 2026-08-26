@@ -4,6 +4,8 @@ import {
   decodePaymentSignatureHeader,
   encodePaymentRequiredHeader,
 } from "@x402/core/http";
+import { recoverTypedDataAddress } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 
 import {
   createLivePaymentSignatureHeaders,
@@ -16,8 +18,13 @@ import {
 } from "../src/config.js";
 
 const PAY_TO = "0x1111111111111111111111111111111111111111";
-const PAYER = "0x2222222222222222222222222222222222222222";
-const SIGNATURE = `0x${"b".repeat(130)}`;
+const PAYER_ACCOUNT = privateKeyToAccount(
+  "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+);
+const MISMATCHED_SIGNER_ACCOUNT = privateKeyToAccount(
+  "0xabcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+);
+const PAYER = PAYER_ACCOUNT.address;
 
 test("parses valid x402 PaymentRequired headers", () => {
   const paymentRequired = createPaymentRequired();
@@ -40,6 +47,23 @@ test("validates exact Base USDC payment requirements before signing", () => {
   assert.equal(decision.requirements.payTo, PAY_TO);
 });
 
+test("accepts lower-case Base USDC asset address before signing", () => {
+  const decision = validateLivePaymentRequirement({
+    paymentRequired: createPaymentRequired({
+      asset: BASE_MAINNET_USDC_ADDRESS.toLowerCase(),
+    }),
+    request: createTaskRequest(),
+    liveMaxUsdc: "0.10",
+    now: new Date("2026-08-22T00:00:00.000Z"),
+  });
+
+  assert.equal(decision.ok, true);
+  assert.equal(
+    decision.requirements.asset.toLowerCase(),
+    BASE_MAINNET_USDC_ADDRESS.toLowerCase(),
+  );
+});
+
 for (const { name, paymentRequired, request, liveMaxUsdc, expectedReason } of [
   {
     name: "unsupported network",
@@ -49,7 +73,14 @@ for (const { name, paymentRequired, request, liveMaxUsdc, expectedReason } of [
     expectedReason: /exact Base Mainnet USDC/u,
   },
   {
-    name: "wrong asset",
+    name: "expired authorization",
+    paymentRequired: createPaymentRequired({ maxTimeoutSeconds: 0 }),
+    request: createTaskRequest(),
+    liveMaxUsdc: "0.10",
+    expectedReason: /authorization expiry/u,
+  },
+  {
+    name: "wrong USDC address",
     paymentRequired: createPaymentRequired({
       asset: "0x3333333333333333333333333333333333333333",
     }),
@@ -121,15 +152,43 @@ test("creates EIP-712/EIP-3009 PAYMENT-SIGNATURE headers with connected wallet",
 
   assert.equal(paymentPayload.x402Version, 2);
   assert.deepEqual(paymentPayload.accepted, paymentRequired.accepts[0]);
-  assert.equal(paymentPayload.payload.signature, SIGNATURE);
+  assert.match(paymentPayload.payload.signature, /^0x[0-9a-fA-F]{130}$/u);
   assert.equal(paymentPayload.payload.authorization.from, PAYER);
   assert.equal(paymentPayload.payload.authorization.to, PAY_TO);
   assert.equal(paymentPayload.payload.authorization.value, "10000");
   assert.match(paymentPayload.payload.authorization.nonce, /^0x[0-9a-fA-F]{64}$/u);
   assert.ok(BigInt(paymentPayload.payload.authorization.validBefore) > 0n);
+  assert.equal(provider.typedData.domain.name, "USD Coin");
+  assert.equal(provider.typedData.domain.version, "2");
   assert.equal(provider.typedData.domain.chainId, 8453);
-  assert.equal(provider.typedData.domain.verifyingContract, BASE_MAINNET_USDC_ADDRESS);
+  assert.equal(
+    provider.typedData.domain.verifyingContract.toLowerCase(),
+    BASE_MAINNET_USDC_ADDRESS.toLowerCase(),
+  );
   assert.equal(provider.typedData.primaryType, "TransferWithAuthorization");
+
+  const recoveredAddress = await recoverTypedDataAddress({
+    ...provider.typedData,
+    signature: paymentPayload.payload.signature,
+  });
+  assert.equal(recoveredAddress.toLowerCase(), PAYER.toLowerCase());
+});
+
+test("fails closed when recovered signer does not match connected account", async () => {
+  const provider = createMockProvider({
+    signerAccount: MISMATCHED_SIGNER_ACCOUNT,
+  });
+
+  await assert.rejects(
+    () =>
+      createLivePaymentSignatureHeaders({
+        paymentRequired: createPaymentRequired(),
+        provider,
+        account: PAYER,
+        rpcUrl: "https://mainnet.base.org",
+      }),
+    /signature recovery does not match/u,
+  );
 });
 
 test("surfaces user-declined wallet signature without creating a payment header", async () => {
@@ -225,7 +284,8 @@ function createTaskRequest(overrides = {}) {
 
 function createMockProvider({
   accounts = [PAYER],
-  signTypedData = async () => SIGNATURE,
+  signerAccount = PAYER_ACCOUNT,
+  signTypedData,
 } = {}) {
   return {
     typedData: null,
@@ -236,7 +296,10 @@ function createMockProvider({
 
       if (method === "eth_signTypedData_v4") {
         this.typedData = JSON.parse(params[1]);
-        return signTypedData({ method, params, typedData: this.typedData });
+        return (
+          signTypedData?.({ method, params, typedData: this.typedData }) ??
+          signerAccount.signTypedData(this.typedData)
+        );
       }
 
       throw new Error(`Unexpected wallet method: ${method}`);

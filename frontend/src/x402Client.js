@@ -1,7 +1,13 @@
 import { x402Client, x402HTTPClient } from "@x402/core/client";
 import { decodePaymentRequiredHeader } from "@x402/core/http";
 import { registerExactEvmScheme } from "@x402/evm/exact/client";
-import { getAddress, isAddress } from "viem";
+import {
+  createWalletClient,
+  custom,
+  getAddress,
+  isAddress,
+  recoverTypedDataAddress,
+} from "viem";
 
 import {
   BASE_MAINNET_CAIP2,
@@ -9,6 +15,8 @@ import {
   BASE_NETWORK,
 } from "./config.js";
 import { DEMO_CURRENCY, parseUsdcAmount } from "./mandatePolicy.js";
+
+const BASE_MAINNET_CHAIN_ID = 8453;
 
 export function parsePaymentRequiredHeader(headerValue) {
   if (!headerValue) {
@@ -41,7 +49,10 @@ export function validateLivePaymentRequirement({
     return deny("Live payment does not offer exact Base Mainnet USDC.");
   }
 
-  if (requirements.asset !== BASE_MAINNET_USDC_ADDRESS) {
+  if (
+    normalizeAddress(requirements.asset) !==
+    normalizeAddress(BASE_MAINNET_USDC_ADDRESS)
+  ) {
     return deny("Live payment asset is not official Base USDC.");
   }
 
@@ -51,6 +62,11 @@ export function validateLivePaymentRequirement({
 
   if (requirements.extra?.assetTransferMethod !== "eip3009") {
     return deny("Live payment must use EIP-3009 authorization.");
+  }
+
+  const maxTimeoutSeconds = Number(requirements.maxTimeoutSeconds);
+  if (!Number.isFinite(maxTimeoutSeconds) || maxTimeoutSeconds <= 0) {
+    return deny("Live payment authorization expiry is invalid.");
   }
 
   if (request.currency !== DEMO_CURRENCY || request.mandate?.currency !== DEMO_CURRENCY) {
@@ -150,6 +166,7 @@ export async function createLivePaymentSignatureHeaders({
   if (normalizeAddress(authorization?.from) !== normalizeAddress(account)) {
     throw new Error("Wallet signer does not match the connected account.");
   }
+  assertAuthorizationFresh(authorization);
 
   return {
     headers: httpClient.encodePaymentSignatureHeader(paymentPayload),
@@ -163,6 +180,11 @@ async function createInjectedWalletSigner({ provider, account }) {
   }
 
   const address = getAddress(account);
+  const walletClient = createWalletClient({
+    account: address,
+    chain: BASE_NETWORK,
+    transport: custom(provider),
+  });
   const accounts = await provider
     .request({ method: "eth_accounts" })
     .catch(() => []);
@@ -176,19 +198,45 @@ async function createInjectedWalletSigner({ provider, account }) {
 
   return {
     address,
-    async signTypedData(message) {
-      return provider.request({
-        method: "eth_signTypedData_v4",
-        params: [address, stringifyTypedData(message)],
+    async signTypedData(typedData) {
+      assertBaseUsdcEip3009TypedData(typedData);
+      const signature = await walletClient.signTypedData({
+        account: address,
+        ...typedData,
       });
+      const recoveredAddress = await recoverTypedDataAddress({
+        ...typedData,
+        signature,
+      });
+      if (normalizeAddress(recoveredAddress) !== normalizeAddress(address)) {
+        throw new Error("Wallet signature recovery does not match the connected account.");
+      }
+
+      return signature;
     },
   };
 }
 
-function stringifyTypedData(value) {
-  return JSON.stringify(value, (_key, entry) =>
-    typeof entry === "bigint" ? entry.toString() : entry,
-  );
+function assertBaseUsdcEip3009TypedData(typedData) {
+  const domain = typedData?.domain ?? {};
+  if (
+    domain.name !== "USD Coin" ||
+    domain.version !== "2" ||
+    Number(domain.chainId) !== BASE_MAINNET_CHAIN_ID ||
+    normalizeAddress(domain.verifyingContract) !==
+      normalizeAddress(BASE_MAINNET_USDC_ADDRESS) ||
+    typedData?.primaryType !== "TransferWithAuthorization"
+  ) {
+    throw new Error("Live payment signature domain is not Base Mainnet USDC EIP-3009.");
+  }
+}
+
+function assertAuthorizationFresh(authorization) {
+  const validBefore = Number(authorization?.validBefore);
+  const now = Math.floor(Date.now() / 1000);
+  if (!Number.isFinite(validBefore) || validBefore <= now) {
+    throw new Error("Live payment authorization is expired.");
+  }
 }
 
 function deny(reason) {

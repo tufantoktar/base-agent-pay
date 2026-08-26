@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { isAddress } from "viem";
 
 import {
@@ -30,6 +30,7 @@ import {
   evaluateMandatePreflight,
   mandateDecisionMessage,
 } from "./mandatePolicy.js";
+import { createInFlightActionGuard } from "./paymentActionGuard.js";
 import {
   connectWallet,
   discoverWallets,
@@ -101,6 +102,7 @@ export default function App() {
     isRecorded: null,
   });
   const [rpcStatus, setRpcStatus] = useState("Checking");
+  const livePaymentActionGuard = useRef(createInFlightActionGuard());
 
   const selectedWallet = useMemo(
     () => wallets.find((wallet) => wallet.id === selectedWalletId) ?? wallets[0],
@@ -450,58 +452,60 @@ export default function App() {
   }
 
   async function handleLivePayment() {
-    if (!isLivePaymentMode || !paymentRequirement) {
+    if (!isLivePaymentMode || !paymentRequirement || paymentRequestInFlight) {
       return;
     }
 
-    const paidRequest = paymentRequest ?? taskRequest;
-    setError("");
+    await livePaymentActionGuard.current.run(async () => {
+      const paidRequest = paymentRequest ?? taskRequest;
+      setError("");
 
-    if (!selectedWallet) {
-      setError("No injected wallet detected.");
-      setPaymentStatus("failed");
-      return;
-    }
+      if (!selectedWallet) {
+        setError("No injected wallet detected.");
+        setPaymentStatus("failed");
+        return;
+      }
 
-    if (!walletConnected) {
-      setError("Connect your wallet before signing the live payment.");
-      setPaymentStatus("failed");
-      return;
-    }
+      if (!walletConnected) {
+        setError("Connect your wallet before signing the live payment.");
+        setPaymentStatus("failed");
+        return;
+      }
 
-    if (!walletOnBaseNetwork) {
-      setError(`Switch your wallet to ${BASE_NETWORK.name} before signing.`);
-      setPaymentStatus("failed");
-      return;
-    }
+      if (!walletOnBaseNetwork) {
+        setError(`Switch your wallet to ${BASE_NETWORK.name} before signing.`);
+        setPaymentStatus("failed");
+        return;
+      }
 
-    const liveValidation = validateLivePaymentRequirement({
-      paymentRequired: paymentRequirement,
-      request: paidRequest,
-      liveMaxUsdc: LIVE_PAYMENT_MAX_USDC,
-    });
-    if (!liveValidation.ok) {
-      setError(liveValidation.reason);
-      setPaymentStatus("failed");
-      return;
-    }
-
-    try {
-      setPaymentStatus("signing");
-      const { headers } = await createLivePaymentSignatureHeaders({
+      const liveValidation = validateLivePaymentRequirement({
         paymentRequired: paymentRequirement,
-        provider: selectedWallet.provider,
-        account: walletState.address,
-        rpcUrl: BASE_NETWORK.rpcUrls.default.http[0],
+        request: paidRequest,
+        liveMaxUsdc: LIVE_PAYMENT_MAX_USDC,
       });
-      setPaymentStatus("awaiting");
-      const result = await submitLivePaidTask(paidRequest, headers);
-      setTaskResult(result);
-      setPaymentStatus("verified");
-    } catch (paymentError) {
-      setError(paymentError.message);
-      setPaymentStatus("failed");
-    }
+      if (!liveValidation.ok) {
+        setError(liveValidation.reason);
+        setPaymentStatus("failed");
+        return;
+      }
+
+      try {
+        setPaymentStatus("signing");
+        const { headers } = await createLivePaymentSignatureHeaders({
+          paymentRequired: paymentRequirement,
+          provider: selectedWallet.provider,
+          account: walletState.address,
+          rpcUrl: BASE_NETWORK.rpcUrls.default.http[0],
+        });
+        setPaymentStatus("awaiting");
+        const result = await submitLivePaidTask(paidRequest, headers);
+        setTaskResult(result);
+        setPaymentStatus("verified");
+      } catch (paymentError) {
+        setError(paymentError.message);
+        setPaymentStatus("failed");
+      }
+    });
   }
 
   async function handleConnectWallet() {
