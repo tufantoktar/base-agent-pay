@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 
 import { STOCK_RPC_CODES, StockRpcError } from "./b20-data-adapter.js";
 import { handleStockAnalysisRequest } from "./stock-analysis-handler.js";
+import { STOCK_MANDATE_CODES } from "./stock-mandate.js";
 
 const SNAPSHOT = Object.freeze({
   asset: Object.freeze({
@@ -35,6 +36,8 @@ test("POST /api/stock-analysis snapshot returns safe normalized data", async () 
   const response = await callStockAnalysis({
     symbol: "AAPLc",
     analysisType: "snapshot",
+    scope: "stock-analysis",
+    mandate: validMandate(),
   });
 
   assert.equal(response.statusCode, 200);
@@ -45,12 +48,18 @@ test("POST /api/stock-analysis snapshot returns safe normalized data", async () 
   assert.equal(response.body.snapshot.totalSupplyAtomic, "461502990000");
   assert.equal(typeof response.body.snapshot.totalSupplyAtomic, "string");
   assert.equal(response.body.provenance.rpcSource, "Base Mainnet");
+  assert.deepEqual(response.body.mandateDecision, {
+    allowed: true,
+    code: STOCK_MANDATE_CODES.ALLOWED,
+  });
 });
 
 test("POST /api/stock-analysis risk-check returns PASS for healthy snapshot", async () => {
   const response = await callStockAnalysis({
     symbol: "AAPLc",
     analysisType: "risk-check",
+    scope: "stock-analysis",
+    mandate: validMandate(),
   });
 
   assert.equal(response.statusCode, 200);
@@ -59,40 +68,45 @@ test("POST /api/stock-analysis risk-check returns PASS for healthy snapshot", as
 });
 
 test("missing symbol is rejected", async () => {
-  const response = await callStockAnalysis({ analysisType: "snapshot" });
+  const response = await callStockAnalysis({
+    analysisType: "snapshot",
+    scope: "stock-analysis",
+    mandate: validMandate(),
+  });
 
   assert.equal(response.statusCode, 400);
   assert.equal(response.body.code, "STOCK_ANALYSIS_INVALID_REQUEST");
 });
 
 test("missing analysisType is rejected", async () => {
-  const response = await callStockAnalysis({ symbol: "AAPLc" });
+  const response = await callStockAnalysis({
+    symbol: "AAPLc",
+    scope: "stock-analysis",
+    mandate: validMandate(),
+  });
 
   assert.equal(response.statusCode, 400);
   assert.equal(response.body.code, "STOCK_ANALYSIS_INVALID_REQUEST");
 });
 
-test("unsupported symbol maps to STOCK_NOT_SUPPORTED", async () => {
-  const response = await callStockAnalysis(
-    {
-      symbol: "TSLAc",
-      analysisType: "snapshot",
-    },
-    {
-      dataAdapter: throwingAdapter(STOCK_RPC_CODES.NOT_SUPPORTED),
-    },
-  );
+test("missing scope is rejected", async () => {
+  const response = await callStockAnalysis({
+    symbol: "AAPLc",
+    analysisType: "snapshot",
+    mandate: validMandate(),
+  });
 
-  assert.equal(response.statusCode, 404);
-  assert.equal(response.body.code, STOCK_RPC_CODES.NOT_SUPPORTED);
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.body.code, "STOCK_ANALYSIS_INVALID_REQUEST");
 });
 
-test("unsupported analysis type is rejected before adapter use", async () => {
+test("missing mandate is rejected before adapter use", async () => {
   let calls = 0;
   const response = await callStockAnalysis(
     {
       symbol: "AAPLc",
-      analysisType: "forecast",
+      analysisType: "snapshot",
+      scope: "stock-analysis",
     },
     {
       dataAdapter: {
@@ -104,8 +118,63 @@ test("unsupported analysis type is rejected before adapter use", async () => {
     },
   );
 
-  assert.equal(response.statusCode, 400);
-  assert.equal(response.body.code, "STOCK_ANALYSIS_TYPE_NOT_SUPPORTED");
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.body.code, STOCK_MANDATE_CODES.MISSING);
+  assert.deepEqual(response.body.mandateDecision, {
+    allowed: false,
+    code: STOCK_MANDATE_CODES.MISSING,
+  });
+  assert.equal(calls, 0);
+});
+
+test("unsupported symbol fails safely before adapter use", async () => {
+  let calls = 0;
+  const response = await callStockAnalysis(
+    {
+      symbol: "TSLAc",
+      analysisType: "snapshot",
+      scope: "stock-analysis",
+      mandate: {
+        ...validMandate(),
+        allowedAssets: ["TSLAc"],
+      },
+    },
+    {
+      dataAdapter: {
+        async getStockSnapshot() {
+          calls += 1;
+          return SNAPSHOT;
+        },
+      },
+    },
+  );
+
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.body.code, STOCK_MANDATE_CODES.UNSUPPORTED_ASSET);
+  assert.equal(calls, 0);
+});
+
+test("unsupported analysis type is rejected by mandate before adapter use", async () => {
+  let calls = 0;
+  const response = await callStockAnalysis(
+    {
+      symbol: "AAPLc",
+      analysisType: "forecast",
+      scope: "stock-analysis",
+      mandate: validMandate(),
+    },
+    {
+      dataAdapter: {
+        async getStockSnapshot() {
+          calls += 1;
+          return SNAPSHOT;
+        },
+      },
+    },
+  );
+
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.body.code, STOCK_MANDATE_CODES.ANALYSIS_TYPE_NOT_ALLOWED);
   assert.equal(calls, 0);
 });
 
@@ -113,6 +182,8 @@ test("arbitrary contract address field is rejected", async () => {
   const response = await callStockAnalysis({
     symbol: "AAPLc",
     analysisType: "snapshot",
+    scope: "stock-analysis",
+    mandate: validMandate(),
     contractAddress: "0x1111111111111111111111111111111111111111",
   });
 
@@ -125,6 +196,8 @@ test("timeout maps safely without raw upstream details", async () => {
     {
       symbol: "AAPLc",
       analysisType: "snapshot",
+      scope: "stock-analysis",
+      mandate: validMandate(),
     },
     {
       dataAdapter: throwingAdapter(STOCK_RPC_CODES.TIMEOUT, "sensitive upstream timeout"),
@@ -141,6 +214,8 @@ test("malformed response maps safely", async () => {
     {
       symbol: "AAPLc",
       analysisType: "snapshot",
+      scope: "stock-analysis",
+      mandate: validMandate(),
     },
     {
       dataAdapter: throwingAdapter(STOCK_RPC_CODES.INVALID_RESPONSE),
@@ -156,6 +231,8 @@ test("chain mismatch maps safely", async () => {
     {
       symbol: "AAPLc",
       analysisType: "snapshot",
+      scope: "stock-analysis",
+      mandate: validMandate(),
     },
     {
       dataAdapter: throwingAdapter(STOCK_RPC_CODES.CHAIN_MISMATCH),
@@ -171,6 +248,8 @@ test("metadata mismatch maps safely", async () => {
     {
       symbol: "AAPLc",
       analysisType: "risk-check",
+      scope: "stock-analysis",
+      mandate: validMandate(),
     },
     {
       dataAdapter: throwingAdapter(STOCK_RPC_CODES.METADATA_MISMATCH),
@@ -181,12 +260,126 @@ test("metadata mismatch maps safely", async () => {
   assert.equal(response.body.code, STOCK_RPC_CODES.METADATA_MISMATCH);
 });
 
+test("denied mandate never calls analysis engine", async () => {
+  let calls = 0;
+  const response = await callStockAnalysis(
+    {
+      symbol: "AAPLc",
+      analysisType: "snapshot",
+      scope: "stock-analysis",
+    },
+    {
+      analysisEngine: {
+        async analyze() {
+          calls += 1;
+          return { ok: true };
+        },
+      },
+    },
+  );
+
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.body.code, STOCK_MANDATE_CODES.MISSING);
+  assert.equal(calls, 0);
+});
+
+test("scope mismatch is denied before adapter use", async () => {
+  let calls = 0;
+  const response = await callStockAnalysis(
+    {
+      symbol: "AAPLc",
+      analysisType: "snapshot",
+      scope: "stock-risk",
+      mandate: validMandate(),
+    },
+    {
+      dataAdapter: {
+        async getStockSnapshot() {
+          calls += 1;
+          return SNAPSHOT;
+        },
+      },
+    },
+  );
+
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.body.code, STOCK_MANDATE_CODES.SCOPE_NOT_ALLOWED);
+  assert.equal(calls, 0);
+});
+
+test("asset not allowed is denied before adapter use", async () => {
+  let calls = 0;
+  const response = await callStockAnalysis(
+    {
+      symbol: "NVDAc",
+      analysisType: "snapshot",
+      scope: "stock-analysis",
+      mandate: validMandate(),
+    },
+    {
+      dataAdapter: {
+        async getStockSnapshot() {
+          calls += 1;
+          return SNAPSHOT;
+        },
+      },
+    },
+  );
+
+  assert.equal(response.statusCode, 403);
+  assert.equal(response.body.code, STOCK_MANDATE_CODES.ASSET_NOT_ALLOWED);
+  assert.equal(calls, 0);
+});
+
+test("risk-check reaches analysis when mandate allows it", async () => {
+  let calls = 0;
+  const response = await callStockAnalysis(
+    {
+      symbol: "AAPLc",
+      analysisType: "risk-check",
+      scope: "stock-analysis",
+      mandate: validMandate(),
+    },
+    {
+      analysisEngine: {
+        async analyze(request) {
+          calls += 1;
+          assert.equal(request.scope, "stock-analysis");
+          return {
+            ok: true,
+            analysisType: "risk-check",
+            risk: { status: "PASS", flags: [] },
+          };
+        },
+      },
+    },
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(calls, 1);
+  assert.equal(response.body.risk.status, "PASS");
+});
+
+test("extra request fields are rejected", async () => {
+  const response = await callStockAnalysis({
+    symbol: "AAPLc",
+    analysisType: "snapshot",
+    scope: "stock-analysis",
+    mandate: validMandate(),
+    trade: true,
+  });
+
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.body.code, "STOCK_ANALYSIS_INVALID_REQUEST");
+});
+
 test("security regression: stock-analysis implementation exposes no write surface", async () => {
   const fs = await import("node:fs/promises");
   const files = [
     new URL("../../api/stock-analysis.js", import.meta.url),
     new URL("./stock-analysis-engine.js", import.meta.url),
     new URL("./stock-analysis-handler.js", import.meta.url),
+    new URL("./stock-mandate.js", import.meta.url),
   ];
   const source = (await Promise.all(files.map((file) => fs.readFile(file, "utf8")))).join("\n");
 
@@ -199,6 +392,8 @@ test("security regression: stock-analysis implementation exposes no write surfac
     "signer",
     "wallet",
     "private key",
+    "verify",
+    "settle",
   ]) {
     assert.equal(source.includes(banned), false, `${banned} must not appear`);
   }
@@ -226,6 +421,7 @@ async function callStockAnalysis(body, options = {}) {
   };
 
   await handleStockAnalysisRequest(req, res, {
+    analysisEngine: options.analysisEngine,
     dataAdapter:
       options.dataAdapter ??
       {
@@ -241,6 +437,17 @@ async function callStockAnalysis(body, options = {}) {
     statusCode: res.statusCode,
     headers: responseHeaders,
     body: rawBody.length > 0 ? JSON.parse(rawBody) : undefined,
+  };
+}
+
+function validMandate(overrides = {}) {
+  return {
+    mandateId: "stock-mandate-handler-test",
+    allowedAssets: ["AAPLc"],
+    allowedAnalysisTypes: ["snapshot", "risk-check"],
+    allowedScopes: ["stock-analysis"],
+    expiresAt: "2026-12-31T23:59:59.000Z",
+    ...overrides,
   };
 }
 

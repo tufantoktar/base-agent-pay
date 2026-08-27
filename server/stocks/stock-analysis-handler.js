@@ -8,9 +8,18 @@ import {
   StockAnalysisEngine,
   StockAnalysisError,
 } from "./stock-analysis-engine.js";
+import {
+  STOCK_MANDATE_CODES,
+  evaluateStockMandate,
+} from "./stock-mandate.js";
 
 const DEFAULT_BASE_MAINNET_RPC_URL = "https://mainnet.base.org";
-const ALLOWED_REQUEST_KEYS = Object.freeze(["symbol", "analysisType"]);
+const ALLOWED_REQUEST_KEYS = Object.freeze([
+  "symbol",
+  "analysisType",
+  "scope",
+  "mandate",
+]);
 
 export async function handleStockAnalysisRequest(req, res, options = {}) {
   applyCorsHeaders(res);
@@ -50,6 +59,23 @@ export async function handleStockAnalysisRequest(req, res, options = {}) {
     });
   }
 
+  const mandateDecision = evaluateRequestMandate({
+    evaluator: options.evaluateStockMandate ?? evaluateStockMandate,
+    request: request.value,
+    mandate: request.value.mandate,
+    now: options.now ?? options.clock?.(),
+  });
+
+  if (!mandateDecision.allowed) {
+    return sendJson(res, 403, {
+      ok: false,
+      error: mandateDecision.code,
+      code: mandateDecision.code,
+      message: safeMandateMessage(mandateDecision.code),
+      mandateDecision: publicMandateDecision(mandateDecision),
+    });
+  }
+
   const engine =
     options.analysisEngine ??
     new StockAnalysisEngine({
@@ -65,7 +91,10 @@ export async function handleStockAnalysisRequest(req, res, options = {}) {
 
   try {
     const result = await engine.analyze(request.value);
-    return sendJson(res, 200, result);
+    return sendJson(res, 200, {
+      ...result,
+      mandateDecision: publicMandateDecision(mandateDecision),
+    });
   } catch (error) {
     return sendJson(res, mapErrorStatus(error), createSafeErrorPayload(error));
   }
@@ -91,12 +120,9 @@ export function normalizeStockAnalysisRequest(body) {
     return invalid("analysisType is required.");
   }
 
-  if (!["snapshot", "risk-check"].includes(analysisType)) {
-    return {
-      ok: false,
-      code: STOCK_ANALYSIS_CODES.TYPE_NOT_SUPPORTED,
-      reason: "analysisType is not supported.",
-    };
+  const scope = normalizeText(body.scope);
+  if (!scope) {
+    return invalid("scope is required.");
   }
 
   return {
@@ -104,7 +130,38 @@ export function normalizeStockAnalysisRequest(body) {
     value: {
       symbol,
       analysisType,
+      scope,
+      mandate: body.mandate,
     },
+  };
+}
+
+function evaluateRequestMandate({ evaluator, request, mandate, now }) {
+  try {
+    const decision = evaluator({ request, mandate, now });
+    if (
+      !decision ||
+      typeof decision.allowed !== "boolean" ||
+      typeof decision.code !== "string"
+    ) {
+      return {
+        allowed: false,
+        code: STOCK_MANDATE_CODES.INVALID,
+      };
+    }
+    return decision;
+  } catch {
+    return {
+      allowed: false,
+      code: STOCK_MANDATE_CODES.INVALID,
+    };
+  }
+}
+
+function publicMandateDecision(decision) {
+  return {
+    allowed: decision.allowed,
+    code: decision.code,
   };
 }
 
@@ -183,6 +240,29 @@ function safeErrorMessage(code) {
     case STOCK_RPC_CODES.REGISTRY_INVALID:
     default:
       return "Stock analysis failed closed.";
+  }
+}
+
+function safeMandateMessage(code) {
+  switch (code) {
+    case STOCK_MANDATE_CODES.MISSING:
+      return "Stock mandate is required.";
+    case STOCK_MANDATE_CODES.INVALID:
+      return "Stock mandate is invalid.";
+    case STOCK_MANDATE_CODES.EXPIRED:
+      return "Stock mandate has expired.";
+    case STOCK_MANDATE_CODES.SCOPE_NOT_ALLOWED:
+      return "Requested scope is not allowed by mandate.";
+    case STOCK_MANDATE_CODES.ASSET_NOT_ALLOWED:
+      return "Requested asset is not allowed by mandate.";
+    case STOCK_MANDATE_CODES.ANALYSIS_TYPE_NOT_ALLOWED:
+      return "Requested analysis type is not allowed by mandate.";
+    case STOCK_MANDATE_CODES.UNSUPPORTED_ASSET:
+      return "Stock mandate includes an unsupported asset.";
+    case STOCK_MANDATE_CODES.INVALID_SPEND_POLICY:
+      return "Stock mandate spend policy is invalid.";
+    default:
+      return "Stock mandate failed closed.";
   }
 }
 

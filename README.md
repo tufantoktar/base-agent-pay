@@ -255,7 +255,15 @@ Example request:
 ```json
 {
   "symbol": "AAPLc",
-  "analysisType": "snapshot"
+  "analysisType": "snapshot",
+  "scope": "stock-analysis",
+  "mandate": {
+    "mandateId": "stock-mandate-example",
+    "allowedAssets": ["AAPLc"],
+    "allowedAnalysisTypes": ["snapshot", "risk-check"],
+    "allowedScopes": ["stock-analysis"],
+    "expiresAt": "2026-12-31T23:59:59.000Z"
+  }
 }
 ```
 
@@ -287,6 +295,10 @@ Example response:
     "registrySource": "https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base#contract-addresses",
     "rpcSource": "Base Mainnet",
     "observedAt": "2026-08-27T10:00:00.000Z"
+  },
+  "mandateDecision": {
+    "allowed": true,
+    "code": "STOCK_MANDATE_ALLOWED"
   }
 }
 ```
@@ -296,6 +308,58 @@ Example response:
 This metadata is intended to make the paid AI task resource understandable to Bazaar-capable facilitators and agents when live mode is intentionally enabled in the future. It does not enable live mode, perform settlement, request wallet signatures, or change payment requirements.
 
 Adding Bazaar-compatible discovery metadata does **not** prove that the resource is currently indexed or listed on Bazaar. Actual facilitator indexing or cataloging may require a separately approved live settlement against the public production URL. No live settlement was performed as part of this implementation.
+
+## B20 Stock Intelligence — Phase 2C
+
+Phase 2C adds Stock Mandate v2 for `POST /api/stock-analysis`. It is a dedicated application-level pre-execution policy layer for read-only stock analysis. It is not wallet authorization, does not authorize trading, does not authorize token approvals, and does not move funds.
+
+Stock Mandate v2 controls:
+
+- `allowedAssets`: exact B20 stock symbols allowed by the trusted registry.
+- `allowedAnalysisTypes`: exact analysis types such as `snapshot` and `risk-check`.
+- `allowedScopes`: must be exactly `["stock-analysis"]`.
+- `expiresAt`: UTC timestamp. If `now >= expiresAt`, the request is denied.
+
+Evaluation is deterministic and fail-closed:
+
+```text
+mandate presence
+structure
+expiry
+scope
+asset
+analysis type
+optional payment-policy fields
+```
+
+The policy runs after request validation and before any Base RPC read, stock snapshot read, or analysis engine execution. If the mandate denies the request, the API returns `403` and does not create the data adapter or call the analysis engine.
+
+Denied response shape:
+
+```json
+{
+  "ok": false,
+  "error": "STOCK_MANDATE_ASSET_NOT_ALLOWED",
+  "code": "STOCK_MANDATE_ASSET_NOT_ALLOWED",
+  "message": "Requested asset is not allowed by mandate.",
+  "mandateDecision": {
+    "allowed": false,
+    "code": "STOCK_MANDATE_ASSET_NOT_ALLOWED"
+  }
+}
+```
+
+Optional future payment-policy fields may be included for forward compatibility:
+
+```json
+{
+  "maxSpendPerTask": "0.05",
+  "currency": "USDC",
+  "allowedCounterparties": ["base-agent-pay"]
+}
+```
+
+These optional fields are validated only as policy data. They do not call x402 `/verify` or `/settle`, do not sign wallet messages, do not approve token spending, and do not send ETH, USDC, or stock tokens. Live x402/Bazaar integration comes later and remains disabled unless explicitly approved in a future phase.
 
 ## Mandate v1
 
