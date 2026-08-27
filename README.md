@@ -246,6 +246,53 @@ This phase does not add a paid stock endpoint, Bazaar stock listing, trading, ap
 
 B20 token data needs extra care: token bytecode presence is not an authenticity proof, ERC-20 `totalSupply()` is not a market cap, and token balances should not be treated as share counts without applying the current B20 multiplier and corporate-action semantics documented by Base.
 
+## B20 Stock Intelligence — Phase 2B
+
+Phase 2B adds `POST /api/stock-analysis` as a read-only stock analysis surface for allowlisted Base B20 tokenized stocks. It supports `snapshot` and `risk-check` analysis types only, uses the trusted stock registry plus Base Mainnet metadata reads, and does not add x402 payment requirements, Bazaar discovery, AI analysis, trading, approvals, transfers, receipt writes, wallet interaction, or investment recommendations.
+
+Example request:
+
+```json
+{
+  "symbol": "AAPLc",
+  "analysisType": "snapshot"
+}
+```
+
+Example response:
+
+```json
+{
+  "ok": true,
+  "analysisType": "snapshot",
+  "asset": {
+    "symbol": "AAPLc",
+    "name": "Apple",
+    "standard": "B20",
+    "issuer": "Coinbase",
+    "contractAddress": "0xb200000000000000000000C2e324d24d7eEcd1fb"
+  },
+  "network": {
+    "chainId": 8453,
+    "caip2": "eip155:8453"
+  },
+  "snapshot": {
+    "tokenName": "Apple Inc.",
+    "tokenSymbol": "AAPLc",
+    "decimals": "8",
+    "totalSupplyAtomic": "461502990000",
+    "blockNumber": "123456"
+  },
+  "provenance": {
+    "registrySource": "https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base#contract-addresses",
+    "rpcSource": "Base Mainnet",
+    "observedAt": "2026-08-27T10:00:00.000Z"
+  }
+}
+```
+
+`risk-check` reports deterministic infrastructure flags such as missing optional metadata, registry/source gaps, and symbol integrity mismatches. It never emits buy, sell, hold, target-price, valuation, expected-return, or other market recommendation language.
+
 This metadata is intended to make the paid AI task resource understandable to Bazaar-capable facilitators and agents when live mode is intentionally enabled in the future. It does not enable live mode, perform settlement, request wallet signatures, or change payment requirements.
 
 Adding Bazaar-compatible discovery metadata does **not** prove that the resource is currently indexed or listed on Bazaar. Actual facilitator indexing or cataloging may require a separately approved live settlement against the public production URL. No live settlement was performed as part of this implementation.
