@@ -303,7 +303,15 @@ test("valid live config returns an x402 v2 payment challenge", async () => {
     error: response.body.error,
     resource: response.body.resource,
     accepts: response.body.accepts,
+    extensions: response.body.extensions,
   });
+  assert.ok(response.body.extensions?.bazaar);
+  assert.equal(response.body.extensions.bazaar.info.input.method, "POST");
+  assert.equal(response.body.extensions.bazaar.info.input.bodyType, "json");
+  assert.equal(
+    response.body.extensions.bazaar.info.output.example.payment.status,
+    "SETTLED",
+  );
   assert.equal(requirements.scheme, "exact");
   assert.equal(requirements.network, "eip155:8453");
   assert.equal(requirements.asset, BASE_MAINNET_USDC.address);

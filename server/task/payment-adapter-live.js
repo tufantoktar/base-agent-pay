@@ -14,6 +14,11 @@ import {
   verifyBaseUsdcTransfer,
 } from "./base-settlement-verifier.js";
 import {
+  TASK_RESOURCE_DESCRIPTION,
+  TASK_RESOURCE_PATH,
+  createTaskBazaarDiscoveryExtensions,
+} from "./bazaar-discovery.js";
+import {
   BASE_MAINNET,
   BASE_MAINNET_USDC,
   X402_PAYMENT_REQUIRED_HEADER,
@@ -2175,13 +2180,14 @@ export function createLivePaymentRequired({
     x402Version: 2,
     error,
     resource: {
-      url: "/api/task",
-      description: "Base Agent Pay live AI task",
+      url: TASK_RESOURCE_PATH,
+      description: TASK_RESOURCE_DESCRIPTION,
       mimeType: "application/json",
       serviceName: "Base Agent Pay",
-      tags: ["base", "ai"],
+      tags: ["base", "ai", "x402"],
     },
     accepts: [paymentRequirements],
+    extensions: createTaskBazaarDiscoveryExtensions(),
   };
 }
 

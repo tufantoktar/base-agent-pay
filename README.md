@@ -234,6 +234,14 @@ durable state is SETTLED
 
 If authorization fails, the AI task does not run. If AI fails after authorization, no settlement occurs. If settlement fails, is pending, unknown, or lacks Base proof, no receipt payload is produced.
 
+## x402 Bazaar Discovery
+
+Base Agent Pay declares Bazaar-compatible discovery metadata for `POST /api/task`. The metadata is carried in the x402 v2 `PaymentRequired.extensions.bazaar` field and describes the public task request body, supported task types, and a minimal successful response example.
+
+This metadata is intended to make the paid AI task resource understandable to Bazaar-capable facilitators and agents when live mode is intentionally enabled in the future. It does not enable live mode, perform settlement, request wallet signatures, or change payment requirements.
+
+Adding Bazaar-compatible discovery metadata does **not** prove that the resource is currently indexed or listed on Bazaar. Actual facilitator indexing or cataloging may require a separately approved live settlement against the public production URL. No live settlement was performed as part of this implementation.
+
 ## Mandate v1
 
 Receipts explain what happened. Mandates prevent disallowed execution before payment.

@@ -1,4 +1,9 @@
 import { PaymentAdapter } from "./payment-adapter-base.js";
+import {
+  TASK_RESOURCE_DESCRIPTION,
+  TASK_RESOURCE_PATH,
+  createTaskBazaarDiscoveryExtensions,
+} from "./bazaar-discovery.js";
 import { BASE_NETWORK, MOCK_PAYMENT, PAYMENT_HEADER } from "./constants.js";
 import { sha256Hex, stableStringify } from "./hash.js";
 
@@ -24,7 +29,15 @@ export class MockPaymentAdapter extends PaymentAdapter {
         caip2: BASE_NETWORK.caip2,
         rpcUrl: BASE_NETWORK.rpcUrl,
       },
+      resource: {
+        url: TASK_RESOURCE_PATH,
+        description: TASK_RESOURCE_DESCRIPTION,
+        mimeType: "application/json",
+        serviceName: "Base Agent Pay",
+        tags: ["base", "ai", "x402"],
+      },
       accepts: [requirement],
+      extensions: createTaskBazaarDiscoveryExtensions(),
       paymentRequirements: requirement,
       mockPaymentHeader: createMockPaymentHeader(requirement),
     };
@@ -102,7 +115,7 @@ export function createMockPaymentRequirement(requestHash) {
     amount: MOCK_PAYMENT.amount,
     recipient: MOCK_PAYMENT.recipient,
     facilitator: MOCK_PAYMENT.facilitator,
-    resource: "/api/task",
+    resource: TASK_RESOURCE_PATH,
     requestHash,
   };
 }
