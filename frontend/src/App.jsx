@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAddress } from "viem";
 
 import {
   createTaskIdempotencyKey,
+  fetchPaymentState,
   requestPaymentRequirement,
   submitLivePaidTask,
   submitMockPaidTask,
@@ -32,6 +33,14 @@ import {
 } from "./mandatePolicy.js";
 import { createInFlightActionGuard } from "./paymentActionGuard.js";
 import {
+  canSignLivePayment,
+  getPaymentStateMessage,
+  isReceiptEligibleForDurablePayment,
+  isValidTransactionHash,
+  taskResultFromPaymentState,
+  toPaymentUiStatus,
+} from "./paymentReconciliation.js";
+import {
   connectWallet,
   discoverWallets,
   requestBaseNetwork,
@@ -56,6 +65,13 @@ const PAYMENT_STATUS = {
   required: "Payment required",
   signing: "Awaiting signature",
   awaiting: "Awaiting payment",
+  authorized: "Payment authorized",
+  resourceRunning: "Task running",
+  resourceSucceeded: "Task complete",
+  settling: "Settlement in progress",
+  settled: "Payment settled",
+  unknown: "Payment unknown",
+  blocked: "Payment blocked",
   verified: "Payment verified",
   failed: "Failed",
 };
@@ -69,6 +85,7 @@ const RECEIPT_STATUS = {
   already: "Already recorded",
   failed: "Failed",
 };
+const LIVE_PAYMENT_CACHE_KEY = "base-agent-pay.livePayment";
 
 export default function App() {
   const [taskType, setTaskType] = useState("summarize");
@@ -86,6 +103,7 @@ export default function App() {
   const [paymentRequest, setPaymentRequest] = useState(null);
   const [paymentStatus, setPaymentStatus] = useState("idle");
   const [paymentRequirement, setPaymentRequirement] = useState(null);
+  const [durablePaymentState, setDurablePaymentState] = useState(null);
   const [taskResult, setTaskResult] = useState(null);
   const [error, setError] = useState("");
   const [wallets, setWallets] = useState([]);
@@ -178,6 +196,17 @@ export default function App() {
     paymentStatus === "preparing" ||
     paymentStatus === "signing" ||
     paymentStatus === "awaiting";
+  const livePaymentCanSign = canSignLivePayment({
+    paymentRequirement,
+    paymentRequestInFlight,
+    paymentState: durablePaymentState,
+  });
+  const liveReceiptSettlementVerified =
+    !isLivePaymentMode || isReceiptEligibleForDurablePayment(durablePaymentState);
+  const durableSettlementTxHash = durablePaymentState?.transactionHash ?? "";
+  const settlementExplorerUrl = isValidTransactionHash(durableSettlementTxHash)
+    ? `${BASE_NETWORK_EXPLORER_URL}/tx/${durableSettlementTxHash}`
+    : "";
   const receiptWritePending =
     receiptState.status === "confirming" || receiptState.status === "pending";
   const canRecordReceipt = Boolean(
@@ -187,6 +216,7 @@ export default function App() {
       walletOnBaseNetwork &&
       receiptAddressConfigured &&
       receiptMandateDecision.allowed &&
+      liveReceiptSettlementVerified &&
       receiptState.isRecorded === false &&
       !receiptWritePending,
   );
@@ -197,7 +227,69 @@ export default function App() {
     ? `${BASE_NETWORK_EXPLORER_URL}/tx/${receiptState.txHash}`
     : "";
 
+  const applyDurablePaymentState = useCallback(
+    (paymentState, request) => {
+      setDurablePaymentState(paymentState);
+      setPaymentStatus(toPaymentUiStatus(paymentState));
+      if (request) {
+        setPaymentRequest(request);
+      }
+
+      const hydratedTaskResult = taskResultFromPaymentState(paymentState);
+      if (hydratedTaskResult) {
+        setTaskResult(hydratedTaskResult);
+      }
+
+      if (paymentState?.status !== "CHALLENGED") {
+        setPaymentRequirement(null);
+      }
+
+      persistLivePayment({
+        taskId: paymentState?.taskId,
+        paymentId: paymentState?.paymentId,
+        idempotencyKey: paymentState?.idempotencyKey,
+        request,
+      });
+    },
+    [],
+  );
+
   useEffect(() => discoverWallets(setWallets), []);
+
+  useEffect(() => {
+    if (!isLivePaymentMode) {
+      return;
+    }
+
+    const persisted = readPersistedLivePayment();
+    const urlLookup = readPaymentLookupFromUrl();
+    const lookup = urlLookup ?? persisted;
+    if (!lookup?.taskId && !lookup?.paymentId && !lookup?.idempotencyKey) {
+      return;
+    }
+
+    let cancelled = false;
+    async function hydratePaymentState() {
+      setPaymentStatus("preparing");
+      try {
+        const paymentState = await fetchPaymentState(lookup);
+        if (!cancelled) {
+          applyDurablePaymentState(paymentState, lookup.request);
+        }
+      } catch (hydrateError) {
+        if (!cancelled) {
+          setError(hydrateError.message);
+          setPaymentStatus("failed");
+        }
+      }
+    }
+
+    hydratePaymentState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyDurablePaymentState, isLivePaymentMode]);
 
   useEffect(() => {
     if (!selectedWalletId && wallets[0]) {
@@ -374,6 +466,21 @@ export default function App() {
     setMandateScope(nextTaskType);
   }
 
+  async function reconcilePaymentAfterError({ paymentError, lookup }) {
+    try {
+      const bodyPayment = paymentError?.body?.payment;
+      if (bodyPayment?.status) {
+        applyDurablePaymentState(bodyPayment, lookup.request);
+        return;
+      }
+
+      const paymentState = await fetchPaymentState(lookup);
+      applyDurablePaymentState(paymentState, lookup.request);
+    } catch {
+      setPaymentStatus("failed");
+    }
+  }
+
   async function handleRequestTask(event) {
     event.preventDefault();
     if (paymentRequestInFlight) {
@@ -384,6 +491,7 @@ export default function App() {
     setTaskResult(null);
     setPaymentRequirement(null);
     setPaymentRequest(null);
+    setDurablePaymentState(null);
     setPaymentStatus("idle");
     setReceiptState({
       status: "waiting",
@@ -423,6 +531,30 @@ export default function App() {
         : requirementResponse;
       setPaymentRequest(submissionRequest);
       setPaymentRequirement(requirement);
+      if (isLivePaymentMode) {
+        const challengedState = {
+          taskId: submissionRequest.idempotencyKey,
+          paymentId: submissionRequest.idempotencyKey,
+          idempotencyKey: submissionRequest.idempotencyKey,
+          status: "CHALLENGED",
+          amountAtomic: requirement.accepts?.[0]?.amount ?? "",
+          asset: requirement.accepts?.[0]?.asset ?? "",
+          network: requirement.accepts?.[0]?.network ?? "",
+          counterparty: requirement.accepts?.[0]?.payTo ?? "",
+          transactionHash: "",
+          receipt: {
+            eligible: false,
+            settlementVerified: false,
+            transactionHash: "",
+          },
+        };
+        setDurablePaymentState(challengedState);
+        persistLivePayment({
+          taskId: submissionRequest.idempotencyKey,
+          idempotencyKey: submissionRequest.idempotencyKey,
+          request: submissionRequest,
+        });
+      }
       setPaymentStatus("required");
     } catch (requestError) {
       setError(requestError.message);
@@ -500,10 +632,21 @@ export default function App() {
         setPaymentStatus("awaiting");
         const result = await submitLivePaidTask(paidRequest, headers);
         setTaskResult(result);
-        setPaymentStatus("verified");
+        if (result.payment) {
+          applyDurablePaymentState(paymentStateFromTaskResult(result), paidRequest);
+        } else {
+          setPaymentStatus("verified");
+        }
       } catch (paymentError) {
+        await reconcilePaymentAfterError({
+          paymentError,
+          lookup: {
+            taskId: paidRequest.idempotencyKey,
+            idempotencyKey: paidRequest.idempotencyKey,
+            request: paidRequest,
+          },
+        });
         setError(paymentError.message);
-        setPaymentStatus("failed");
       }
     });
   }
@@ -540,6 +683,17 @@ export default function App() {
 
   async function handleRecordReceipt() {
     setError("");
+
+    if (isLivePaymentMode && !liveReceiptSettlementVerified) {
+      setReceiptState({
+        status: "failed",
+        message: "Live receipt requires verified durable SETTLED payment state.",
+        txHash: "",
+        receipt: null,
+        isRecorded: false,
+      });
+      return;
+    }
 
     const latestReceiptMandateDecision = evaluateMandatePreflight({
       request: receiptPolicyRequest,
@@ -913,6 +1067,11 @@ export default function App() {
           <div className={`status-card status-${paymentStatus}`}>
             <span>Status</span>
             <strong>{PAYMENT_STATUS[paymentStatus]}</strong>
+            {isLivePaymentMode && durablePaymentState?.status ? (
+              <small>
+                {durablePaymentState.status}: {getPaymentStateMessage(durablePaymentState)}
+              </small>
+            ) : null}
           </div>
 
           <div className="mode-card">
@@ -956,21 +1115,44 @@ export default function App() {
                     "local-mock-facilitator"}
               </dd>
             </div>
+            {isLivePaymentMode && durablePaymentState?.status ? (
+              <div>
+                <dt>Durable state</dt>
+                <dd>{durablePaymentState.status}</dd>
+              </div>
+            ) : null}
+            {isLivePaymentMode && durableSettlementTxHash ? (
+              <div>
+                <dt>Settlement tx</dt>
+                <dd>
+                  <a
+                    href={settlementExplorerUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {durableSettlementTxHash}
+                  </a>
+                </dd>
+              </div>
+            ) : null}
           </dl>
 
           {isLivePaymentMode ? (
             <>
-              <button
-                type="button"
-                className="primary"
-                onClick={handleLivePayment}
-                disabled={!paymentRequirement || paymentRequestInFlight}
-              >
-                Sign Live Payment
-              </button>
+              {livePaymentCanSign ? (
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={handleLivePayment}
+                  disabled={!livePaymentCanSign}
+                >
+                  Sign Live Payment
+                </button>
+              ) : null}
               <small className="payment-note">
-                Review the wallet EIP-712 request before signing. The app does
-                not auto-sign or auto-pay.
+                {durablePaymentState?.status && durablePaymentState.status !== "CHALLENGED"
+                  ? getPaymentStateMessage(durablePaymentState)
+                  : "Review the wallet EIP-712 request before signing. The app does not auto-sign or auto-pay."}
               </small>
             </>
           ) : (
@@ -1095,6 +1277,99 @@ export default function App() {
       ) : null}
     </main>
   );
+}
+
+function paymentStateFromTaskResult(result) {
+  const payment = result.payment ?? {};
+  return {
+    taskId: result.taskId,
+    paymentId: payment.paymentId ?? payment.idempotencyKey ?? result.taskId,
+    idempotencyKey: payment.idempotencyKey ?? result.taskId,
+    status: payment.status,
+    mode: payment.mode,
+    network: payment.network?.caip2 ?? payment.network,
+    asset: payment.asset?.address ?? payment.asset,
+    amountAtomic: payment.atomicAmount,
+    counterparty: payment.recipient ?? payment.payee,
+    transactionHash: payment.transactionHash ?? "",
+    updatedAt: payment.settledAt ?? result.completedAt,
+    settledAt: payment.settledAt ?? "",
+    canRetry: false,
+    receipt: {
+      eligible: payment.status === "SETTLED" && isValidTransactionHash(payment.transactionHash),
+      settlementVerified:
+        payment.status === "SETTLED" && isValidTransactionHash(payment.transactionHash),
+      transactionHash: payment.transactionHash ?? "",
+    },
+    task: {
+      status: result.status,
+      taskId: result.taskId,
+      requestHash: result.requestHash,
+      resultHash: result.resultHash,
+      completedAt: result.completedAt,
+      result: result.result,
+      receipt: result.receipt,
+    },
+  };
+}
+
+function readPersistedLivePayment() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage?.getItem(LIVE_PAYMENT_CACHE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function readPaymentLookupFromUrl() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const taskId = params.get("taskId")?.trim();
+  const paymentId = params.get("paymentId")?.trim();
+  const idempotencyKey = params.get("idempotencyKey")?.trim();
+  if (!taskId && !paymentId && !idempotencyKey) {
+    return null;
+  }
+
+  return {
+    taskId,
+    paymentId,
+    idempotencyKey,
+  };
+}
+
+function persistLivePayment({ taskId, paymentId, idempotencyKey, request }) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const persisted = {
+    taskId,
+    paymentId,
+    idempotencyKey,
+    request,
+  };
+  if (!persisted.taskId && !persisted.paymentId && !persisted.idempotencyKey) {
+    return;
+  }
+
+  try {
+    window.localStorage?.setItem(LIVE_PAYMENT_CACHE_KEY, JSON.stringify(persisted));
+  } catch {
+    // Local cache is presentation-only; PostgreSQL remains the source of truth.
+  }
 }
 
 async function readReceiptStatus(taskId) {

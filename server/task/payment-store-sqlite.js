@@ -87,6 +87,24 @@ export class SqlitePaymentStore extends PaymentStore {
     }
   }
 
+  getPaymentByLookup(lookupId) {
+    try {
+      const row = this.db
+        .prepare(
+          `SELECT * FROM live_payments
+           WHERE idempotency_key = ?
+              OR task_id = ?
+              OR payment_id = ?
+           ORDER BY updated_at DESC
+           LIMIT 1`,
+        )
+        .get(lookupId, lookupId, lookupId);
+      return row ? mapPaymentRow(row) : null;
+    } catch (error) {
+      throw storeError("Payment store read failed.", error);
+    }
+  }
+
   createPayment(record) {
     try {
       const now = toUtcTimestamp(this.now());
@@ -326,6 +344,8 @@ export class SqlitePaymentStore extends PaymentStore {
           ON live_payments(state);
         CREATE INDEX IF NOT EXISTS idx_live_payments_payment_id
           ON live_payments(payment_id);
+        CREATE INDEX IF NOT EXISTS idx_live_payments_task_id
+          ON live_payments(task_id);
       `);
       this.db
         .prepare(

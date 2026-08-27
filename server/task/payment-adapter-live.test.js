@@ -693,6 +693,58 @@ test("successful live settlement runs AI and returns receipt-eligible hashes", a
   assert.equal(settlementVerifier.calls, 1);
 });
 
+test("read-only payment state endpoint returns safe SETTLED durable state", async () => {
+  const facilitator = createMockFacilitator();
+  const paymentStore = createTempPaymentStore();
+  const adapter = createLiveAdapter({ facilitator, paymentStore });
+  const request = liveRequest({
+    idempotencyKey: "task_live_state_read_0001",
+  });
+
+  const settled = await callTask(
+    request,
+    {
+      "payment-signature": createPaymentSignature({ adapter, request }),
+    },
+    {
+      paymentAdapter: adapter,
+    },
+  );
+  const state = await callTaskState(request.idempotencyKey, {
+    paymentAdapter: adapter,
+  });
+
+  assert.equal(settled.statusCode, 200);
+  assert.equal(state.statusCode, 200);
+  assert.equal(state.body.payment.status, LIVE_PAYMENT_STATES.SETTLED);
+  assert.equal(state.body.payment.taskId, settled.body.taskId);
+  assert.equal(state.body.payment.idempotencyKey, request.idempotencyKey);
+  assert.equal(state.body.payment.paymentId, request.idempotencyKey);
+  assert.equal(state.body.payment.transactionHash, TX_HASH);
+  assert.equal(state.body.payment.receipt.settlementVerified, true);
+  assert.equal(state.body.payment.receipt.eligible, true);
+  assert.equal(state.body.payment.task.taskId, settled.body.taskId);
+  assert.equal(state.body.payment.task.requestHash, settled.body.requestHash);
+  assert.equal(state.body.payment.task.resultHash, settled.body.resultHash);
+  assert.equal("paymentRequired" in state.body.payment, false);
+  assert.equal("paymentRequirements" in state.body.payment, false);
+  assert.equal("settlementResponse" in state.body.payment, false);
+  assert.equal("payment" in state.body.payment, false);
+  assert.doesNotMatch(JSON.stringify(state.body), /PAYMENT-SIGNATURE|signature|authorization|Bearer|test-cdp/u);
+
+  const stateByFinalTaskId = await callTaskState(settled.body.taskId, {
+    paymentAdapter: adapter,
+  });
+  assert.equal(stateByFinalTaskId.statusCode, 200);
+  assert.equal(stateByFinalTaskId.body.payment.status, LIVE_PAYMENT_STATES.SETTLED);
+  assert.equal(
+    stateByFinalTaskId.body.payment.idempotencyKey,
+    request.idempotencyKey,
+  );
+  assert.equal(facilitator.calls.verify, 1);
+  assert.equal(facilitator.calls.settle, 1);
+});
+
 test("failed live settlement runs AI but prevents receipt payload creation", async () => {
   const facilitator = createMockFacilitator({
     settleResponses: [
@@ -1636,6 +1688,41 @@ async function callTask(body, headers = {}, options = {}) {
     "content-type": "application/json",
     ...headers,
   };
+
+  const chunks = [];
+  const responseHeaders = new Map();
+  const res = {
+    statusCode: 200,
+    setHeader(name, value) {
+      responseHeaders.set(name.toLowerCase(), value);
+    },
+    end(chunk) {
+      if (chunk) {
+        chunks.push(Buffer.from(chunk));
+      }
+    },
+  };
+
+  await handleTaskRequest(req, res, {
+    now: NOW,
+    mandateLogger: () => {},
+    paymentLogger: () => {},
+    ...options,
+  });
+
+  const rawBody = Buffer.concat(chunks).toString("utf8");
+  return {
+    statusCode: res.statusCode,
+    headers: responseHeaders,
+    body: rawBody.length > 0 ? JSON.parse(rawBody) : undefined,
+  };
+}
+
+async function callTaskState(taskId, options = {}) {
+  const req = Readable.from([]);
+  req.method = "GET";
+  req.url = `/api/task?taskId=${encodeURIComponent(taskId)}`;
+  req.headers = {};
 
   const chunks = [];
   const responseHeaders = new Map();

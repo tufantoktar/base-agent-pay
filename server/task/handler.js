@@ -15,6 +15,10 @@ export async function handleTaskRequest(req, res, options = {}) {
     return sendJson(res, 204, {});
   }
 
+  if (req.method === "GET") {
+    return handlePaymentStateRequest(req, res, options);
+  }
+
   if (req.method !== "POST") {
     return sendJson(res, 405, {
       error: "Method Not Allowed",
@@ -263,6 +267,43 @@ export async function handleTaskRequest(req, res, options = {}) {
   return sendJson(res, 200, responsePayload, responseHeaders);
 }
 
+async function handlePaymentStateRequest(req, res, options = {}) {
+  const lookup = readPaymentStateLookup(req);
+  if (!lookup.taskId && !lookup.paymentId && !lookup.idempotencyKey) {
+    return sendJson(res, 400, {
+      ok: false,
+      error: "PAYMENT_STATE_LOOKUP_REQUIRED",
+      code: "PAYMENT_STATE_LOOKUP_REQUIRED",
+      message: "Provide taskId, paymentId, or idempotencyKey.",
+    });
+  }
+
+  const paymentAdapter = options.paymentAdapter ?? getPaymentAdapter();
+  if (typeof paymentAdapter.getPaymentState !== "function") {
+    return sendJson(res, 404, {
+      ok: false,
+      error: "PAYMENT_STATE_UNAVAILABLE",
+      code: "PAYMENT_STATE_UNAVAILABLE",
+      message: "Durable live payment state is unavailable for this payment mode.",
+    });
+  }
+
+  const result = await paymentAdapter.getPaymentState(lookup);
+  if (!result.ok) {
+    return sendJson(res, result.statusCode ?? 404, {
+      ok: false,
+      error: result.code,
+      code: result.code,
+      message: result.reason,
+    });
+  }
+
+  return sendJson(res, 200, {
+    ok: true,
+    payment: result.paymentState,
+  });
+}
+
 export function normalizeTaskRequest(body) {
   const taskType = normalizeTaskType(body?.taskType);
   const input = normalizeInput(body?.input);
@@ -377,6 +418,27 @@ function normalizePolicyText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function readPaymentStateLookup(req) {
+  const query = req.query && typeof req.query === "object" ? req.query : {};
+  const url = parseRequestUrl(req.url);
+
+  return {
+    taskId: normalizePolicyText(query.taskId ?? url.searchParams.get("taskId")),
+    paymentId: normalizePolicyText(query.paymentId ?? url.searchParams.get("paymentId")),
+    idempotencyKey: normalizePolicyText(
+      query.idempotencyKey ?? url.searchParams.get("idempotencyKey"),
+    ),
+  };
+}
+
+function parseRequestUrl(value) {
+  try {
+    return new URL(value ?? "", "http://127.0.0.1");
+  } catch {
+    return new URL("http://127.0.0.1");
+  }
+}
+
 function createUnverifiedPaymentHeaders({ paymentAdapter, paymentRequired, verification }) {
   if (verification.responseHeaders) {
     return verification.responseHeaders;
@@ -487,7 +549,7 @@ async function readJsonBody(req) {
 
 function applyCorsHeaders(res) {
   setHeader(res, "Access-Control-Allow-Origin", "*");
-  setHeader(res, "Access-Control-Allow-Methods", "POST, OPTIONS");
+  setHeader(res, "Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   setHeader(
     res,
     "Access-Control-Allow-Headers",

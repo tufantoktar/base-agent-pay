@@ -104,6 +104,22 @@ export class PostgresPaymentStore extends PaymentStore {
     });
   }
 
+  async getPaymentByLookup(lookupId) {
+    return this.guard("Payment store read failed.", async () => {
+      await this.ensureInitialized();
+      const result = await this.pool.query(
+        `SELECT * FROM ${this.table("live_payments")}
+         WHERE idempotency_key = $1
+            OR task_id = $1
+            OR payment_id = $1
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+        [lookupId],
+      );
+      return result.rows[0] ? mapPaymentRow(result.rows[0]) : null;
+    });
+  }
+
   async createPayment(record) {
     return this.guard("Payment store insert failed.", async () => {
       await this.ensureInitialized();
@@ -346,6 +362,8 @@ export class PostgresPaymentStore extends PaymentStore {
             ON ${this.table("live_payments")} (state);
           CREATE INDEX IF NOT EXISTS ${quoteIdentifier("live_payments_payment_id_idx")}
             ON ${this.table("live_payments")} (payment_id);
+          CREATE INDEX IF NOT EXISTS ${quoteIdentifier("live_payments_task_id_idx")}
+            ON ${this.table("live_payments")} (task_id);
         `);
         await client.query(
           `INSERT INTO ${this.table("payment_store_metadata")} (key, value)

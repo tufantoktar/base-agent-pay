@@ -86,6 +86,10 @@ export class PaymentStore {
     throw new Error("PaymentStore.getPayment must be implemented");
   }
 
+  getPaymentByLookup() {
+    throw new Error("PaymentStore.getPaymentByLookup must be implemented");
+  }
+
   createPayment() {
     throw new Error("PaymentStore.createPayment must be implemented");
   }

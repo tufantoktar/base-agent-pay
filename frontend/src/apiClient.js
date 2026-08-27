@@ -50,15 +50,54 @@ export async function submitLivePaidTask(task, paymentSignatureHeaders) {
   const body = await readJson(response);
 
   if (!response.ok) {
-    throw new Error(body?.reason ?? body?.message ?? "Live task request failed.");
+    throw createApiError(
+      body?.reason ?? body?.message ?? "Live task request failed.",
+      response,
+      body,
+    );
   }
 
   return body;
 }
 
+export async function fetchPaymentState({ taskId, paymentId, idempotencyKey }) {
+  const url = new URL(API_URL, window.location.origin);
+  if (taskId) {
+    url.searchParams.set("taskId", taskId);
+  }
+  if (paymentId) {
+    url.searchParams.set("paymentId", paymentId);
+  }
+  if (idempotencyKey) {
+    url.searchParams.set("idempotencyKey", idempotencyKey);
+  }
+
+  const response = await fetch(url.toString(), {
+    method: "GET",
+  });
+  const body = await readJson(response);
+
+  if (!response.ok) {
+    throw createApiError(
+      body?.message ?? body?.error ?? "Payment state lookup failed.",
+      response,
+      body,
+    );
+  }
+
+  return body.payment;
+}
+
 async function readJson(response) {
   const text = await response.text();
   return text.length > 0 ? JSON.parse(text) : {};
+}
+
+function createApiError(message, response, body) {
+  const error = new Error(message);
+  error.status = response.status;
+  error.body = body;
+  return error;
 }
 
 export function createTaskIdempotencyKey({

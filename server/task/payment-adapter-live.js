@@ -798,6 +798,49 @@ export class LivePaymentAdapter extends PaymentAdapter {
     }
   }
 
+  async getPaymentState({ taskId, paymentId, idempotencyKey } = {}) {
+    const lookupId =
+      normalizeText(idempotencyKey) ||
+      normalizeText(taskId) ||
+      normalizeText(paymentId);
+    if (!LIVE_PAYMENT_ID_PATTERN.test(lookupId)) {
+      return {
+        ok: false,
+        code: LIVE_PAYMENT_CODES.PAYMENT_STATUS_UNKNOWN,
+        reason: "A valid live payment taskId or paymentId is required.",
+        statusCode: 400,
+      };
+    }
+
+    let existing;
+    try {
+      existing =
+        typeof this.paymentStore.getPaymentByLookup === "function"
+          ? await this.paymentStore.getPaymentByLookup(lookupId)
+          : await this.paymentStore.getPayment(lookupId);
+    } catch (error) {
+      return this.failPaymentStore({
+        error,
+        prepared: { idempotencyKey: lookupId, requestedAmount: "", config: {} },
+      });
+    }
+
+    if (!existing) {
+      return {
+        ok: false,
+        code: LIVE_PAYMENT_CODES.PAYMENT_STATUS_UNKNOWN,
+        reason: "No durable live payment state was found for this task.",
+        statusCode: 404,
+      };
+    }
+
+    return {
+      ok: true,
+      statusCode: 200,
+      paymentState: createSafePaymentState(existing),
+    };
+  }
+
   async requireDurableSettlement({ request, logger }) {
     const idempotencyKey = normalizeText(request?.idempotencyKey);
     if (!LIVE_PAYMENT_ID_PATTERN.test(idempotencyKey)) {
@@ -2443,6 +2486,52 @@ function createLivePaymentRecord({
     transactionHash,
     reference: transactionHash,
     settledAt: new Date().toISOString(),
+  };
+}
+
+function createSafePaymentState(stored) {
+  const transactionHash = safeTransactionHash(stored.transactionHash);
+  const isSettled = stored.state === LIVE_PAYMENT_STATES.SETTLED;
+  const settlementVerified = isSettled && TX_HASH_PATTERN.test(transactionHash);
+  const taskPayload = stored.taskResponse?.payload;
+
+  return {
+    taskId: stored.taskId,
+    paymentId: stored.paymentId || stored.idempotencyKey,
+    idempotencyKey: stored.idempotencyKey,
+    status: stored.state,
+    mode: stored.mode,
+    network: stored.network,
+    asset: stored.asset,
+    amountAtomic: stored.amountAtomic,
+    counterparty: stored.counterparty,
+    transactionHash,
+    updatedAt: stored.updatedAt,
+    settledAt: stored.settledAt,
+    canRetry: stored.canRetry === true,
+    receipt: {
+      eligible: settlementVerified,
+      settlementVerified,
+      transactionHash,
+    },
+    task: taskPayload
+      ? {
+          status: taskPayload.status,
+          taskId: taskPayload.taskId,
+          requestHash: taskPayload.requestHash,
+          resultHash: taskPayload.resultHash,
+          completedAt: taskPayload.completedAt,
+          result: taskPayload.result,
+          receipt: taskPayload.receipt
+            ? {
+                eligible: taskPayload.receipt.eligible === true,
+                onchain: taskPayload.receipt.onchain === true,
+                registry: taskPayload.receipt.registry,
+                message: taskPayload.receipt.message,
+              }
+            : null,
+        }
+      : null,
   };
 }
 
