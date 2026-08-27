@@ -351,6 +351,37 @@ Current production target:
 
 The smart contract is real on Base Mainnet. Receipt writes from the frontend are real Base Mainnet transactions signed interactively by the connected wallet. Production x402 remains `MOCK` unless a separately approved environment update explicitly enables live mode. The AI provider remains `MOCK`.
 
+## Verified Base Mainnet Canary
+
+A self-controlled technical canary has been completed on Base Mainnet. This is evidence that the live payment and receipt path can work end to end under controlled conditions; it is not evidence of independent-user adoption, external customer payment, revenue, user growth, or production traffic.
+
+### x402 Payment Proof
+
+- Network: Base Mainnet, chain ID `8453`
+- Amount: `0.01 USDC`
+- Canonical Base USDC: [`0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`](https://basescan.org/address/0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913)
+- Payment recipient: [`0x178dbE4d33eF4D6aA79FF9FE0347FBF5CE845776`](https://basescan.org/address/0x178dbE4d33eF4D6aA79FF9FE0347FBF5CE845776)
+- Settlement transaction: [`0x6e4f179195fae7d36f1262ece0773a6c192de2fa3911ec5d42afade8653889b9`](https://basescan.org/tx/0x6e4f179195fae7d36f1262ece0773a6c192de2fa3911ec5d42afade8653889b9)
+- Durable backend state: `SETTLED`
+- Settlement proof: independently verified by the existing Base RPC USDC `Transfer` verification path before `SETTLED` was accepted
+
+### Receipt Proof
+
+- AgentTaskReceipt contract: [`0x89365D56D7a8795e141e2e6Cf50Fc6015d988be2`](https://basescan.org/address/0x89365D56D7a8795e141e2e6Cf50Fc6015d988be2)
+- Receipt transaction: [`0x23f7811bbd7beed62039c6b3f2b867150c11c690427a774432c68e6da5cea04e`](https://basescan.org/tx/0x23f7811bbd7beed62039c6b3f2b867150c11c690427a774432c68e6da5cea04e)
+- Function: `recordReceipt`
+- Status: `Success`
+- ETH value: `0`
+- Requester: [`0x90ceB49E4C26B817E1F74E48db7d1342E19A2adc`](https://basescan.org/address/0x90ceB49E4C26B817E1F74E48db7d1342E19A2adc)
+- Task ID: `0xe1dd4eca1e750238151ad80417c71b7695434981c3ad98b1232e043dbc4057a0`
+
+### Builder Attribution Proof
+
+- Builder Code: `bc_tuybnhw2`
+- Encoded Builder Code in receipt calldata: `62635f747579626e687732`
+- The receipt transaction calldata contains the ERC-8021 suffix marker sequence after the Builder Code.
+- This is calldata-level ERC-8021 attribution evidence. Base.dev, Talent, dashboard, or indexer credit is a separate analytics concern and is not claimed here unless independently verified.
+
 ## Base Sepolia
 
 Retained testnet target:
@@ -369,9 +400,17 @@ The Base Sepolia deployment is retained for reference and local testnet configur
 
 Builder Code: `bc_tuybnhw2`
 
-ERC-8021 attribution is enabled for future frontend receipt writes. The frontend wallet client appends the Builder Code attribution suffix to transaction calldata automatically, so no smart contract change is required. Existing historical transactions are not retroactively attributed.
+A real Base Mainnet receipt transaction has now been sent with Builder Code `bc_tuybnhw2`, and calldata-level ERC-8021 attribution has been verified for that receipt transaction. The frontend wallet client appends the Builder Code attribution suffix to transaction calldata automatically, so no smart contract change is required.
+
+This README distinguishes calldata attribution from analytics/indexing credit. Base.dev, Talent, dashboard, or indexer credit should not be claimed unless that separate indexing result is independently verified. Existing historical transactions that did not include the suffix are not retroactively attributed.
 
 The default x402 payment mode remains `MOCK`, AI remains `MOCK`, and receipt writes remain real, interactively confirmed transactions on the configured Base network.
+
+## Release Fingerprint
+
+Production builds include a read-only `/release.json` file. It exposes only safe release metadata such as project identity, repository identity, Vercel deployment environment, Git commit SHA, Git branch/ref, build timestamp, and metadata version.
+
+`/release.json` does not expose credentials, environment contents, CDP keys, database URLs, wallet material, payment signatures, or authorization payloads. If Vercel Git metadata is unavailable, commit and branch values are returned as `null` rather than fabricated. This helps compare a public deployment with an intended Git commit, but it is not a cryptographic supply-chain attestation.
 
 ## Security Model
 
