@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "api:dev": "node server/dev-server.js",
-    "api:test": "node --test server/task/*.test.js",
+    "api:test": "node --test server/task/*.test.js server/stocks/*.test.js",
     "frontend:lint": "npm run lint --workspace frontend",
     "frontend:build": "npm run build --workspace frontend",
     "lint": "npm run frontend:lint",

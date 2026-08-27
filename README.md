@@ -238,6 +238,14 @@ If authorization fails, the AI task does not run. If AI fails after authorizatio
 
 Base Agent Pay declares Bazaar-compatible discovery metadata for `POST /api/task`. The metadata is carried in the x402 v2 `PaymentRequired.extensions.bazaar` field and describes the public task request body, supported task types, and a minimal successful response example.
 
+## B20 Stock Intelligence — Phase 2A
+
+Phase 2A adds read-only infrastructure for a future Base Agent Pay stock intelligence workflow. It introduces a trusted Coinbase B20 stock registry and a Base Mainnet metadata adapter that can read approved token metadata through `eth_chainId`, `eth_blockNumber`, and `eth_call` only.
+
+This phase does not add a paid stock endpoint, Bazaar stock listing, trading, approvals, transfers, portfolio execution, wallet interaction, investment recommendations, or live x402 changes. Contract addresses must come from the official Base/Coinbase stock listing before an asset is enabled; unsupported or unknown assets fail closed instead of accepting user-supplied token addresses.
+
+B20 token data needs extra care: token bytecode presence is not an authenticity proof, ERC-20 `totalSupply()` is not a market cap, and token balances should not be treated as share counts without applying the current B20 multiplier and corporate-action semantics documented by Base.
+
 This metadata is intended to make the paid AI task resource understandable to Bazaar-capable facilitators and agents when live mode is intentionally enabled in the future. It does not enable live mode, perform settlement, request wallet signatures, or change payment requirements.
 
 Adding Bazaar-compatible discovery metadata does **not** prove that the resource is currently indexed or listed on Bazaar. Actual facilitator indexing or cataloging may require a separately approved live settlement against the public production URL. No live settlement was performed as part of this implementation.
