@@ -15,6 +15,7 @@ const TASK_TYPES = Object.freeze([
 const TASK_INPUT_EXAMPLE = Object.freeze({
   taskType: "summarize",
   input: "Summarize this Base payment workflow.",
+  scope: "summarize",
   counterparty: "base-agent-pay",
   amount: "0.01",
   currency: "USDC",
@@ -42,6 +43,11 @@ const TASK_INPUT_SCHEMA = Object.freeze({
       minLength: 1,
       maxLength: 2000,
       description: "Text input for the AI task.",
+    },
+    scope: {
+      type: "string",
+      enum: TASK_TYPES,
+      description: "Mandate scope for the requested task.",
     },
     counterparty: {
       type: "string",
@@ -103,6 +109,7 @@ const TASK_INPUT_SCHEMA = Object.freeze({
   required: [
     "taskType",
     "input",
+    "scope",
     "counterparty",
     "amount",
     "currency",

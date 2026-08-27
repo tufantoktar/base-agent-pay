@@ -12,6 +12,7 @@ import {
 } from "./bazaar-discovery.js";
 import { BASE_NETWORK } from "./constants.js";
 import { handleTaskRequest } from "./handler.js";
+import { MANDATE_CODES } from "./mandate.js";
 
 const SAFE_REQUEST = {
   taskType: "summarize",
@@ -49,6 +50,7 @@ test("Bazaar discovery declaration validates with official x402 extension helper
   assert.equal(extensions.bazaar.info.input.type, "http");
   assert.equal(extensions.bazaar.info.input.method, TASK_RESOURCE_METHOD);
   assert.equal(extensions.bazaar.info.input.bodyType, "json");
+  assert.equal(extensions.bazaar.info.input.body.scope, "summarize");
 });
 
 test("unpaid mock task request returns Bazaar-compatible PaymentRequired metadata", async () => {
@@ -67,10 +69,19 @@ test("unpaid mock task request returns Bazaar-compatible PaymentRequired metadat
   assert.equal(bazaar.info.input.type, "http");
   assert.equal(bazaar.info.input.bodyType, "json");
   assert.equal(bazaar.info.input.body.taskType, "summarize");
+  assert.equal(bazaar.info.input.body.scope, "summarize");
   assert.equal(
     bazaar.schema.properties.input.properties.body.properties.taskType.enum.includes(
       "structured-answer",
     ),
+    true,
+  );
+  assert.deepEqual(
+    bazaar.schema.properties.input.properties.body.properties.scope.enum,
+    ["summarize", "rewrite", "classify", "structured-answer"],
+  );
+  assert.equal(
+    bazaar.schema.properties.input.properties.body.required.includes("scope"),
     true,
   );
   assert.equal(
@@ -90,6 +101,16 @@ test("unpaid mock task request returns Bazaar-compatible PaymentRequired metadat
   for (const pattern of SENSITIVE_PATTERNS) {
     assert.doesNotMatch(serializedExtension, pattern);
   }
+});
+
+test("advertised Bazaar example request reaches payment challenge with scope", async () => {
+  const extensions = createTaskBazaarDiscoveryExtensions();
+  const exampleRequest = extensions.bazaar.info.input.body;
+  const response = await callTask(exampleRequest);
+
+  assert.equal(response.statusCode, 402);
+  assert.equal(response.body.code, "PAYMENT_REQUIRED");
+  assert.notEqual(response.body.error, MANDATE_CODES.SCOPE_NOT_ALLOWED);
 });
 
 test("Bazaar task resource description is truthful and non-listing language", () => {
