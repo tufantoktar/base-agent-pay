@@ -12,6 +12,13 @@ import {
   STOCK_MANDATE_CODES,
   evaluateStockMandate,
 } from "./stock-mandate.js";
+import {
+  PAYMENT_RESPONSE_HEADER,
+  X402_PAYMENT_REQUIRED_HEADER,
+  X402_PAYMENT_RESPONSE_HEADER,
+} from "../task/constants.js";
+import { sha256Hex } from "../task/hash.js";
+import { createStockPaymentAdapter } from "./stock-payment.js";
 
 const DEFAULT_BASE_MAINNET_RPC_URL = "https://mainnet.base.org";
 const ALLOWED_REQUEST_KEYS = Object.freeze([
@@ -76,6 +83,41 @@ export async function handleStockAnalysisRequest(req, res, options = {}) {
     });
   }
 
+  const requestHash = sha256Hex(request.value);
+  const paymentAdapter =
+    options.paymentAdapter ??
+    createStockPaymentAdapter({
+      env: options.env ?? process.env,
+    });
+  const verification = await paymentAdapter.verifyPayment({
+    headers: req.headers ?? {},
+    request: request.value,
+    requestHash,
+    now: options.now ?? options.clock?.(),
+  });
+
+  if (!verification.ok) {
+    const paymentRequired =
+      verification.paymentRequired ??
+      createStockPaymentFailurePayload({
+        paymentAdapter,
+        request: request.value,
+        requestHash,
+        verification,
+        now: options.now ?? options.clock?.(),
+      });
+
+    return sendJson(
+      res,
+      verification.statusCode ?? 402,
+      {
+        ...paymentRequired,
+        reason: verification.reason,
+      },
+      createUnverifiedPaymentHeaders({ paymentAdapter, paymentRequired, verification }),
+    );
+  }
+
   const engine =
     options.analysisEngine ??
     new StockAnalysisEngine({
@@ -94,6 +136,7 @@ export async function handleStockAnalysisRequest(req, res, options = {}) {
     return sendJson(res, 200, {
       ...result,
       mandateDecision: publicMandateDecision(mandateDecision),
+      payment: createStockPaymentResponse(verification.payment),
     });
   } catch (error) {
     return sendJson(res, mapErrorStatus(error), createSafeErrorPayload(error));
@@ -266,6 +309,59 @@ function safeMandateMessage(code) {
   }
 }
 
+function createStockPaymentFailurePayload({
+  paymentAdapter,
+  request,
+  requestHash,
+  verification,
+  now,
+}) {
+  if (paymentAdapter.mode === "mock" || verification.code === "PAYMENT_REQUIRED") {
+    return paymentAdapter.createPaymentRequired({
+      request,
+      requestHash,
+      now,
+    });
+  }
+
+  return {
+    ok: false,
+    error: verification.code,
+    code: verification.code,
+    message: verification.reason,
+    mode: paymentAdapter.mode,
+    status: verification.state,
+  };
+}
+
+function createUnverifiedPaymentHeaders({ paymentAdapter, paymentRequired, verification }) {
+  if (verification.responseHeaders) {
+    return verification.responseHeaders;
+  }
+
+  return {
+    [PAYMENT_RESPONSE_HEADER]: JSON.stringify({
+      mode: paymentRequired?.mode ?? paymentAdapter.mode,
+      verified: false,
+      code: verification.code,
+    }),
+  };
+}
+
+function createStockPaymentResponse(payment) {
+  return {
+    mode: payment?.mode ?? "mock",
+    status: "VERIFIED",
+    scheme: payment?.scheme,
+    network: payment?.network,
+    amount: payment?.amount,
+    currency: payment?.currency,
+    asset: payment?.asset,
+    recipient: payment?.recipient,
+    reference: payment?.reference,
+  };
+}
+
 async function readJsonBody(req) {
   const chunks = [];
   for await (const chunk of req) {
@@ -292,7 +388,14 @@ function sendJson(res, statusCode, payload, headers = {}) {
 function applyCorsHeaders(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, X-PAYMENT, PAYMENT-SIGNATURE",
+  );
+  res.setHeader(
+    "Access-Control-Expose-Headers",
+    `${PAYMENT_RESPONSE_HEADER}, ${X402_PAYMENT_REQUIRED_HEADER}, ${X402_PAYMENT_RESPONSE_HEADER}`,
+  );
 }
 
 function invalid(reason) {

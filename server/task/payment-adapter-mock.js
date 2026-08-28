@@ -10,12 +10,13 @@ import { sha256Hex, stableStringify } from "./hash.js";
 const MOCK_SIGNATURE_SALT = "base-agent-pay-local-mock-v1";
 
 export class MockPaymentAdapter extends PaymentAdapter {
-  constructor() {
+  constructor(resourceConfig = {}) {
     super({ mode: "mock" });
+    this.resourceConfig = resolveResourceConfig(resourceConfig);
   }
 
   createPaymentRequired({ requestHash }) {
-    const requirement = createMockPaymentRequirement(requestHash);
+    const requirement = createMockPaymentRequirement(requestHash, this.resourceConfig);
     return {
       error: "Payment Required",
       code: "PAYMENT_REQUIRED",
@@ -24,20 +25,20 @@ export class MockPaymentAdapter extends PaymentAdapter {
       mode: "mock",
       x402Version: "2",
       network: {
-        name: BASE_NETWORK.name,
-        chainId: BASE_NETWORK.chainId,
-        caip2: BASE_NETWORK.caip2,
-        rpcUrl: BASE_NETWORK.rpcUrl,
+        name: this.resourceConfig.network.name,
+        chainId: this.resourceConfig.network.chainId,
+        caip2: this.resourceConfig.network.caip2,
+        rpcUrl: this.resourceConfig.network.rpcUrl,
       },
       resource: {
-        url: TASK_RESOURCE_PATH,
-        description: TASK_RESOURCE_DESCRIPTION,
-        mimeType: "application/json",
-        serviceName: "Base Agent Pay",
-        tags: ["base", "ai", "x402"],
+        url: this.resourceConfig.resourcePath,
+        description: this.resourceConfig.resourceDescription,
+        mimeType: this.resourceConfig.mimeType,
+        serviceName: this.resourceConfig.serviceName,
+        tags: this.resourceConfig.tags,
       },
       accepts: [requirement],
-      extensions: createTaskBazaarDiscoveryExtensions(),
+      extensions: this.resourceConfig.createDiscoveryExtensions(),
       paymentRequirements: requirement,
       mockPaymentHeader: createMockPaymentHeader(requirement),
     };
@@ -72,11 +73,22 @@ export class MockPaymentAdapter extends PaymentAdapter {
       };
     }
 
-    if (claim.mode !== "mock" || claim.network.chainId !== BASE_NETWORK.chainId) {
+    if (
+      claim.mode !== "mock" ||
+      claim.network.chainId !== this.resourceConfig.network.chainId
+    ) {
       return {
         ok: false,
         code: "PAYMENT_INVALID",
         reason: "Mock payment network or mode is invalid.",
+      };
+    }
+
+    if (!matchesResourceConfig(claim, this.resourceConfig)) {
+      return {
+        ok: false,
+        code: "PAYMENT_INVALID",
+        reason: "Mock payment requirement does not match this resource.",
       };
     }
 
@@ -87,6 +99,7 @@ export class MockPaymentAdapter extends PaymentAdapter {
         scheme: claim.scheme,
         network: claim.network,
         asset: claim.asset,
+        currency: claim.currency,
         amount: claim.amount,
         recipient: claim.recipient,
         facilitator: claim.facilitator,
@@ -97,25 +110,28 @@ export class MockPaymentAdapter extends PaymentAdapter {
   }
 }
 
-export function createMockPaymentRequirement(requestHash) {
+export function createMockPaymentRequirement(requestHash, resourceConfig = {}) {
+  const config = resolveResourceConfig(resourceConfig);
+
   return {
     mode: "mock",
     scheme: MOCK_PAYMENT.scheme,
-    description: MOCK_PAYMENT.description,
+    description: config.paymentDescription,
     network: {
-      name: BASE_NETWORK.name,
-      chainId: BASE_NETWORK.chainId,
-      caip2: BASE_NETWORK.caip2,
-      rpcUrl: BASE_NETWORK.rpcUrl,
+      name: config.network.name,
+      chainId: config.network.chainId,
+      caip2: config.network.caip2,
+      rpcUrl: config.network.rpcUrl,
     },
     asset: {
-      symbol: MOCK_PAYMENT.assetSymbol,
-      address: MOCK_PAYMENT.assetAddress,
+      symbol: config.assetSymbol,
+      address: config.assetAddress,
     },
-    amount: MOCK_PAYMENT.amount,
-    recipient: MOCK_PAYMENT.recipient,
-    facilitator: MOCK_PAYMENT.facilitator,
-    resource: TASK_RESOURCE_PATH,
+    currency: config.currency,
+    amount: config.paymentAmount,
+    recipient: config.recipient,
+    facilitator: config.facilitator,
+    resource: config.resourcePath,
     requestHash,
   };
 }
@@ -158,6 +174,73 @@ function readHeader(headers, name) {
   }
 
   return headers[name] ?? headers[name.toLowerCase()] ?? headers[name.toUpperCase()];
+}
+
+function resolveResourceConfig(config = {}) {
+  return {
+    resourcePath: normalizeText(config.resourcePath) || TASK_RESOURCE_PATH,
+    resourceDescription:
+      normalizeText(config.resourceDescription) || TASK_RESOURCE_DESCRIPTION,
+    mimeType: normalizeText(config.mimeType) || "application/json",
+    serviceName: normalizeText(config.serviceName) || "Base Agent Pay",
+    tags: normalizeTags(config.tags),
+    network: normalizeNetwork(config.network),
+    paymentDescription: normalizeText(config.paymentDescription) || MOCK_PAYMENT.description,
+    paymentAmount: normalizeText(config.paymentAmount) || MOCK_PAYMENT.amount,
+    currency: normalizeText(config.currency) || "USDC",
+    assetSymbol: normalizeText(config.assetSymbol) || MOCK_PAYMENT.assetSymbol,
+    assetAddress: config.assetAddress === undefined ? MOCK_PAYMENT.assetAddress : config.assetAddress,
+    recipient: normalizeText(config.recipient) || MOCK_PAYMENT.recipient,
+    facilitator: normalizeText(config.facilitator) || MOCK_PAYMENT.facilitator,
+    createDiscoveryExtensions:
+      typeof config.createDiscoveryExtensions === "function"
+        ? config.createDiscoveryExtensions
+        : createTaskBazaarDiscoveryExtensions,
+  };
+}
+
+function matchesResourceConfig(claim, config) {
+  return (
+    claim.resource === config.resourcePath &&
+    claim.amount === config.paymentAmount &&
+    claim.currency === config.currency &&
+    claim.recipient === config.recipient &&
+    claim.facilitator === config.facilitator &&
+    claim.network?.caip2 === config.network.caip2 &&
+    claim.asset?.symbol === config.assetSymbol &&
+    (claim.asset?.address ?? null) === (config.assetAddress ?? null)
+  );
+}
+
+function normalizeTags(value) {
+  if (!Array.isArray(value)) {
+    return ["base", "ai", "x402"];
+  }
+
+  const tags = value.map((tag) => normalizeText(tag)).filter(Boolean);
+  return tags.length > 0 ? tags : ["base", "ai", "x402"];
+}
+
+function normalizeText(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeNetwork(value) {
+  if (
+    value &&
+    typeof value === "object" &&
+    Number.isInteger(value.chainId) &&
+    normalizeText(value.caip2)
+  ) {
+    return {
+      name: normalizeText(value.name) || `Chain ${value.chainId}`,
+      chainId: value.chainId,
+      caip2: normalizeText(value.caip2),
+      rpcUrl: normalizeText(value.rpcUrl),
+    };
+  }
+
+  return BASE_NETWORK;
 }
 
 function base64UrlEncode(value) {

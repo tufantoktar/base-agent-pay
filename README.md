@@ -236,7 +236,10 @@ If authorization fails, the AI task does not run. If AI fails after authorizatio
 
 ## x402 Bazaar Discovery
 
-Base Agent Pay declares Bazaar-compatible discovery metadata for `POST /api/task`. The metadata is carried in the x402 v2 `PaymentRequired.extensions.bazaar` field and describes the public task request body, supported task types, and a minimal successful response example.
+Base Agent Pay declares Bazaar-compatible discovery metadata for `POST /api/task`
+and `POST /api/stock-analysis`. The metadata is carried in the x402 v2
+`PaymentRequired.extensions.bazaar` field and describes the public request body,
+supported resource parameters, and minimal successful response examples.
 
 ## B20 Stock Intelligence — Phase 2A
 
@@ -359,7 +362,112 @@ Optional future payment-policy fields may be included for forward compatibility:
 }
 ```
 
-These optional fields are validated only as policy data. They do not call x402 `/verify` or `/settle`, do not sign wallet messages, do not approve token spending, and do not send ETH, USDC, or stock tokens. Live x402/Bazaar integration comes later and remains disabled unless explicitly approved in a future phase.
+These optional fields are validated only as policy data. They do not call x402 `/verify` or `/settle`, do not sign wallet messages, do not approve token spending, and do not send ETH, USDC, or stock tokens. Live stock x402 settlement remains disabled unless explicitly approved in a future phase.
+
+## B20 Stock Intelligence — Phase 2D
+
+Phase 2D makes `POST /api/stock-analysis` x402-compatible in MOCK mode and
+adds dedicated Bazaar-compatible discovery metadata for the stock analysis
+resource. Production/default behavior remains `X402_MODE=mock` and
+`VITE_X402_MODE=mock`; no Vercel environment variables were changed.
+
+The stock endpoint order is:
+
+```text
+request validation
+Stock Mandate v2 evaluation
+x402 mock payment challenge or verification
+B20 read-only data adapter
+StockAnalysisEngine
+response
+```
+
+Denied mandates still return `403` before any payment challenge, Base RPC read,
+or analysis engine execution. Allowed mandates without an `X-PAYMENT` header
+return a mock `402 PAYMENT_REQUIRED` response for resource
+`POST /api/stock-analysis` with a fixed `0.01 USDC` example requirement on
+Base Mainnet (`eip155:8453`). Retrying the same request with the supplied mock
+header verifies the mock payment and then runs the existing read-only stock
+analysis.
+
+Example unpaid response:
+
+```json
+{
+  "error": "Payment Required",
+  "code": "PAYMENT_REQUIRED",
+  "mode": "mock",
+  "resource": {
+    "url": "/api/stock-analysis",
+    "description": "Policy-controlled read-only tokenized stock analysis on Base."
+  },
+  "accepts": [
+    {
+      "mode": "mock",
+      "scheme": "mock-x402",
+      "network": {
+        "chainId": 8453,
+        "caip2": "eip155:8453"
+      },
+      "asset": {
+        "symbol": "USDC",
+        "address": null
+      },
+      "currency": "USDC",
+      "amount": "0.01",
+      "resource": "/api/stock-analysis"
+    }
+  ],
+  "extensions": {
+    "bazaar": {
+      "info": {
+        "input": {
+          "type": "http",
+          "method": "POST",
+          "bodyType": "json"
+        }
+      }
+    }
+  },
+  "mockPaymentHeader": "mock.<payload>.<signature>"
+}
+```
+
+Example paid MOCK response adds truthful payment metadata to the existing
+analysis payload:
+
+```json
+{
+  "ok": true,
+  "analysisType": "snapshot",
+  "asset": {
+    "symbol": "AAPLc",
+    "name": "Apple",
+    "standard": "B20",
+    "issuer": "Coinbase"
+  },
+  "network": {
+    "chainId": 8453,
+    "caip2": "eip155:8453"
+  },
+  "payment": {
+    "mode": "mock",
+    "status": "VERIFIED",
+    "amount": "0.01",
+    "currency": "USDC"
+  }
+}
+```
+
+The stock Bazaar metadata advertises only the public stock-analysis request
+contract: `symbol` (`AAPLc`, `NVDAc`, `METAc`, `GOOGLc`), `analysisType`
+(`snapshot`, `risk-check`), `scope: "stock-analysis"`, and Stock Mandate v2
+fields. It does not advertise user-supplied contract addresses, price targets,
+market cap calculations, portfolio execution, trading, stock execution,
+investment recommendations, receipt writes, or Bazaar indexing/listing status.
+
+Phase 2D did not perform a live payment, facilitator verify/settle call, wallet
+signature, token transfer, trade, contract deployment, or onchain receipt write.
 
 ## Mandate v1
 
