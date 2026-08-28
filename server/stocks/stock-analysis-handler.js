@@ -18,6 +18,12 @@ import {
   X402_PAYMENT_RESPONSE_HEADER,
 } from "../task/constants.js";
 import { sha256Hex } from "../task/hash.js";
+import { createStockAnalysisAuditRecord } from "./stock-audit-proof.js";
+import {
+  STOCK_AUDIT_ERROR_CODES,
+  minimalStockAuditRecord,
+} from "./stock-audit-store.js";
+import { createDefaultStockAuditStore } from "./stock-audit-store-factory.js";
 import { createStockPaymentAdapter } from "./stock-payment.js";
 
 const DEFAULT_BASE_MAINNET_RPC_URL = "https://mainnet.base.org";
@@ -133,10 +139,25 @@ export async function handleStockAnalysisRequest(req, res, options = {}) {
 
   try {
     const result = await engine.analyze(request.value);
+    const payment = createStockPaymentResponse(verification.payment);
+    const audit = await persistStockAnalysisAudit({
+      options,
+      request: request.value,
+      result,
+      mandateDecision,
+      payment,
+      requestHash,
+    });
+
+    if (!audit.ok) {
+      return sendJson(res, 500, createSafeAuditErrorPayload({ payment }));
+    }
+
     return sendJson(res, 200, {
       ...result,
       mandateDecision: publicMandateDecision(mandateDecision),
-      payment: createStockPaymentResponse(verification.payment),
+      payment,
+      audit: minimalStockAuditRecord(audit.record),
     });
   } catch (error) {
     return sendJson(res, mapErrorStatus(error), createSafeErrorPayload(error));
@@ -360,6 +381,100 @@ function createStockPaymentResponse(payment) {
     recipient: payment?.recipient,
     reference: payment?.reference,
   };
+}
+
+async function persistStockAnalysisAudit({
+  options,
+  request,
+  result,
+  mandateDecision,
+  payment,
+  requestHash,
+}) {
+  let ownedAuditStore;
+
+  try {
+    const now = resolveNow(options);
+    const auditRecord = createStockAnalysisAuditRecord({
+      request,
+      result,
+      mandateDecision,
+      payment,
+      requestHash,
+      now,
+      createAuditId: options.createAuditId,
+      createRequestId: options.createRequestId,
+    });
+    const auditStore =
+      options.auditStore ??
+      (ownedAuditStore = createDefaultStockAuditStore({
+        env: options.env ?? process.env,
+        now: () => new Date(now),
+        logger: options.auditLogger,
+      }));
+    const stored = await auditStore.createAuditRecord(auditRecord);
+    logAuditEvent(options.auditLogger, stored);
+    return {
+      ok: true,
+      record: stored,
+    };
+  } catch {
+    return {
+      ok: false,
+    };
+  } finally {
+    await closeOwnedAuditStore(ownedAuditStore);
+  }
+}
+
+function createSafeAuditErrorPayload({ payment }) {
+  return {
+    ok: false,
+    error: STOCK_AUDIT_ERROR_CODES.PERSISTENCE_FAILED,
+    code: STOCK_AUDIT_ERROR_CODES.PERSISTENCE_FAILED,
+    message:
+      "Stock analysis completed after payment verification, but its required audit proof could not be persisted.",
+    payment,
+    audit: {
+      persisted: false,
+      eligible: false,
+    },
+  };
+}
+
+function logAuditEvent(logger, auditRecord) {
+  if (typeof logger !== "function") {
+    return;
+  }
+
+  try {
+    logger({
+      event: "stock_analysis_audit_created",
+      auditId: auditRecord.auditId,
+      requestId: auditRecord.requestId,
+      symbol: auditRecord.symbol,
+      analysisType: auditRecord.analysisType,
+      resultHash: auditRecord.resultHash,
+    });
+  } catch {
+    // Audit logging is best-effort; durable persistence is enforced separately.
+  }
+}
+
+async function closeOwnedAuditStore(auditStore) {
+  if (!auditStore || typeof auditStore.close !== "function") {
+    return;
+  }
+
+  try {
+    await auditStore.close();
+  } catch {
+    // Closing an internally-created store is best-effort after the write path.
+  }
+}
+
+function resolveNow(options = {}) {
+  return options.now ?? options.clock?.() ?? new Date();
 }
 
 async function readJsonBody(req) {

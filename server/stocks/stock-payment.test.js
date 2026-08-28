@@ -77,7 +77,7 @@ test("task mock payment proof cannot pay stock analysis", () => {
   assert.match(verification.reason, /resource/u);
 });
 
-test("live x402 is blocked for stock analysis in Phase 2D", () => {
+test("live x402 is blocked for stock analysis in Phase 2E", () => {
   const adapter = createStockPaymentAdapter({
     env: {
       X402_MODE: "live",

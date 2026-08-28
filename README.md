@@ -469,6 +469,73 @@ investment recommendations, receipt writes, or Bazaar indexing/listing status.
 Phase 2D did not perform a live payment, facilitator verify/settle call, wallet
 signature, token transfer, trade, contract deployment, or onchain receipt write.
 
+## B20 Stock Intelligence — Phase 2E
+
+Phase 2E adds durable application-level audit proofs for successful
+`POST /api/stock-analysis` executions. The endpoint order is now:
+
+```text
+request validation
+Stock Mandate v2 evaluation
+x402 mock payment verification
+B20 read-only data adapter
+StockAnalysisEngine
+durable stock_analysis_audit record
+response
+```
+
+Only accepted, paid, successful analyses create audit rows. Denied mandates stop
+before payment, missing or invalid payment stops before Base RPC, RPC failures do
+not create successful audit rows, and a successful paid analysis fails closed if
+its required audit row cannot be written.
+
+Successful responses include a compact proof reference:
+
+```json
+{
+  "audit": {
+    "auditId": "11111111-1111-4111-8111-111111111111",
+    "requestId": "22222222-2222-4222-8222-222222222222",
+    "resultHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}
+```
+
+`auditId` and `requestId` are generated server-side as public UUID v4
+correlation IDs. Client-supplied request IDs are not trusted as authoritative.
+The read-only lookup endpoint is:
+
+```text
+GET /api/stock-analysis/audit?id=<auditId>
+```
+
+The lookup returns safe metadata only: public audit/request IDs, mandate ID,
+symbol, analysis type, scope, MOCK payment metadata, Base Mainnet identifiers,
+contract address from the trusted registry, result status/hash, observed block,
+timestamps, optional request hash, policy decision code, and provenance source
+labels. It does not expose internal database IDs and does not provide update,
+delete, mutation, or arbitrary query behavior.
+
+`resultHash` is deterministic SHA-256 over a canonical safe subset of the
+analysis result. The hashed payload includes symbol, analysis type, Base chain
+ID, CAIP-2 network, trusted contract address, the relevant analysis payload
+(`snapshot` or `risk` plus `snapshot`), observed block/provenance, mandate ID,
+and MOCK payment reference. It excludes `X-PAYMENT`, payment signatures, wallet
+data, arbitrary raw request bodies, API keys, and secrets.
+
+The audit store follows the existing payment-store persistence convention:
+SQLite is the local/test default at `PAYMENT_STORE_PATH` and Postgres is the
+required production/serverless durable path with `PAYMENT_STORE_DRIVER=postgres`
+and `PAYMENT_DATABASE_URL`. Production-like runtimes fail closed instead of
+silently falling back to ephemeral local storage.
+
+MOCK stock audit records use `paymentMode: "mock"` and
+`paymentStatus: "VERIFIED"`. `VERIFIED` means the mock adapter accepted the
+mock payment header. It is not onchain settlement, not a facilitator settlement,
+not a Base transaction, and not an onchain receipt. Phase 2E does not add stock
+trading, wallet signing, token approvals, token transfers, transaction
+submission, blockchain writes, live stock x402, or Vercel environment changes.
+
 ## Mandate v1
 
 Receipts explain what happened. Mandates prevent disallowed execution before payment.

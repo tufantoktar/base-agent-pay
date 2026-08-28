@@ -29,6 +29,7 @@ test("stock Bazaar discovery declaration validates with official helper", () => 
   const extensions = createStockBazaarDiscoveryExtensions();
   const validation = validateDiscoveryExtension(extensions.bazaar);
   const bodySchema = extensions.bazaar.schema.properties.input.properties.body;
+  const outputSchema = extensions.bazaar.schema.properties.output.properties.example;
   const mandateSchema = bodySchema.properties.mandate;
 
   assert.equal(validation.valid, true, validation.errors?.join(", "));
@@ -38,6 +39,30 @@ test("stock Bazaar discovery declaration validates with official helper", () => 
   assert.equal(extensions.bazaar.info.input.body.scope, "stock-analysis");
   assert.equal(extensions.bazaar.info.output.example.payment.status, "VERIFIED");
   assert.notEqual(extensions.bazaar.info.output.example.payment.status, "SETTLED");
+  assert.match(
+    extensions.bazaar.info.output.example.audit.auditId,
+    /^[0-9a-f-]{36}$/iu,
+  );
+  assert.match(
+    extensions.bazaar.info.output.example.audit.requestId,
+    /^[0-9a-f-]{36}$/iu,
+  );
+  assert.match(
+    extensions.bazaar.info.output.example.audit.resultHash,
+    /^sha256:[a-f0-9]{64}$/u,
+  );
+  for (const variant of outputSchema.anyOf) {
+    assert.equal(variant.required.includes("audit"), true);
+    assert.deepEqual(variant.properties.audit.required, [
+      "auditId",
+      "requestId",
+      "resultHash",
+    ]);
+    assert.equal(
+      variant.properties.audit.properties.resultHash.pattern,
+      "^sha256:[a-f0-9]{64}$",
+    );
+  }
   assert.deepEqual(bodySchema.properties.symbol.enum, [
     "AAPLc",
     "NVDAc",

@@ -141,6 +141,11 @@ const STOCK_SNAPSHOT_OUTPUT_EXAMPLE = Object.freeze({
     mode: "mock",
     status: "VERIFIED",
   }),
+  audit: Object.freeze({
+    auditId: "11111111-1111-4111-8111-111111111111",
+    requestId: "22222222-2222-4222-8222-222222222222",
+    resultHash: `sha256:${"0".repeat(64)}`,
+  }),
 });
 
 const STOCK_OUTPUT_SCHEMA = Object.freeze({
@@ -193,8 +198,9 @@ const STOCK_OUTPUT_SCHEMA = Object.freeze({
             status: { type: "string", const: "VERIFIED" },
           },
         },
+        audit: createAuditOutputSchema(),
       },
-      required: ["ok", "analysisType", "asset", "network", "snapshot"],
+      required: ["ok", "analysisType", "asset", "network", "snapshot", "audit"],
     }),
     Object.freeze({
       type: "object",
@@ -223,11 +229,31 @@ const STOCK_OUTPUT_SCHEMA = Object.freeze({
             status: { type: "string", const: "VERIFIED" },
           },
         },
+        audit: createAuditOutputSchema(),
       },
-      required: ["ok", "analysisType", "symbol", "risk"],
+      required: ["ok", "analysisType", "symbol", "risk", "audit"],
     }),
   ]),
 });
+
+function createAuditOutputSchema() {
+  return {
+    type: "object",
+    properties: {
+      auditId: {
+        type: "string",
+      },
+      requestId: {
+        type: "string",
+      },
+      resultHash: {
+        type: "string",
+        pattern: "^sha256:[a-f0-9]{64}$",
+      },
+    },
+    required: ["auditId", "requestId", "resultHash"],
+  };
+}
 
 export function createStockBazaarDiscoveryExtensions() {
   return declareDiscoveryExtension({

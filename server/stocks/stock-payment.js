@@ -45,14 +45,14 @@ export function createStockPaymentAdapter({ env = process.env } = {}) {
     return new BlockedStockPaymentAdapter({
       mode,
       code: STOCK_PAYMENT_CODES.LIVE_DISABLED,
-      reason: "Live x402 is not enabled for stock analysis in Phase 2D.",
+      reason: "Live x402 is not enabled for stock analysis in Phase 2E.",
     });
   }
 
   return new BlockedStockPaymentAdapter({
     mode,
     code: STOCK_PAYMENT_CODES.MODE_UNSUPPORTED,
-    reason: "X402_MODE must be mock for stock analysis in Phase 2D.",
+    reason: "X402_MODE must be mock for stock analysis in Phase 2E.",
   });
 }
 
