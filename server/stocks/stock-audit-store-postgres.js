@@ -62,6 +62,7 @@ export class PostgresStockAuditStore extends StockAuditStore {
           contract_address,
           result_status,
           result_hash,
+          proof_payload_json,
           observed_block_number,
           observed_at,
           created_at,
@@ -72,7 +73,7 @@ export class PostgresStockAuditStore extends StockAuditStore {
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8,
           $9, $10, $11, $12, $13, $14, $15, $16,
-          $17, $18, $19, $20, $21, $22, $23, $24
+          $17, $18, $19, $20, $21, $22, $23, $24, $25
         )
         RETURNING *`,
         toInsertParams(record),
@@ -140,6 +141,7 @@ export class PostgresStockAuditStore extends StockAuditStore {
             contract_address TEXT NOT NULL,
             result_status TEXT NOT NULL,
             result_hash TEXT NOT NULL,
+            proof_payload_json TEXT,
             observed_block_number TEXT NOT NULL,
             observed_at TEXT NOT NULL,
             created_at TEXT NOT NULL,
@@ -154,20 +156,45 @@ export class PostgresStockAuditStore extends StockAuditStore {
           CREATE INDEX IF NOT EXISTS ${quoteIdentifier("stock_analysis_audit_created_at_idx")}
             ON ${this.table("stock_analysis_audit")} (created_at);
         `);
-        await client.query(
-          `INSERT INTO ${this.table("stock_audit_store_metadata")} (key, value)
-           VALUES ('schema_version', $1)
-           ON CONFLICT (key) DO NOTHING`,
-          [String(STOCK_AUDIT_SCHEMA_VERSION)],
-        );
         const versionResult = await client.query(
           `SELECT value FROM ${this.table("stock_audit_store_metadata")}
            WHERE key = 'schema_version'`,
         );
         const version = versionResult.rows[0]?.value;
-        if (version !== String(STOCK_AUDIT_SCHEMA_VERSION)) {
+        if (version && !["1", String(STOCK_AUDIT_SCHEMA_VERSION)].includes(version)) {
           throw new StockAuditStoreError(
             `Unsupported stock audit store schema version: ${version}.`,
+          );
+        }
+        await client.query(
+          `ALTER TABLE ${this.table("stock_analysis_audit")}
+           ADD COLUMN IF NOT EXISTS proof_payload_json TEXT`,
+        );
+
+        if (version) {
+          await client.query(
+            `UPDATE ${this.table("stock_audit_store_metadata")}
+             SET value = $1
+             WHERE key = 'schema_version'`,
+            [String(STOCK_AUDIT_SCHEMA_VERSION)],
+          );
+        } else {
+          await client.query(
+            `INSERT INTO ${this.table("stock_audit_store_metadata")} (key, value)
+             VALUES ('schema_version', $1)
+             ON CONFLICT (key) DO NOTHING`,
+            [String(STOCK_AUDIT_SCHEMA_VERSION)],
+          );
+        }
+
+        const currentVersionResult = await client.query(
+          `SELECT value FROM ${this.table("stock_audit_store_metadata")}
+           WHERE key = 'schema_version'`,
+        );
+        const currentVersion = currentVersionResult.rows[0]?.value;
+        if (currentVersion !== String(STOCK_AUDIT_SCHEMA_VERSION)) {
+          throw new StockAuditStoreError(
+            `Unsupported stock audit store schema version: ${currentVersion}.`,
           );
         }
       });
@@ -259,6 +286,7 @@ function toInsertParams(record) {
     record.contractAddress,
     record.resultStatus,
     record.resultHash,
+    record.proofPayloadJson,
     record.observedBlockNumber ?? null,
     record.observedAt ?? null,
     record.createdAt,
@@ -289,6 +317,7 @@ function mapAuditRow(row) {
     contractAddress: row.contract_address,
     resultStatus: row.result_status,
     resultHash: row.result_hash,
+    proofPayloadJson: row.proof_payload_json ?? "",
     observedBlockNumber: row.observed_block_number ?? "",
     observedAt: row.observed_at ?? "",
     createdAt: toStoredTimestamp(row.created_at),

@@ -1,6 +1,7 @@
 import http from "node:http";
 import { handleStockAnalysisRequest } from "./stocks/stock-analysis-handler.js";
 import { handleStockAnalysisAuditRequest } from "./stocks/stock-audit-handler.js";
+import { handleStockAnalysisAuditVerifyRequest } from "./stocks/stock-audit-verify-handler.js";
 import { handleTaskRequest } from "./task/handler.js";
 
 const port = Number(process.env.PORT ?? 8787);
@@ -26,6 +27,26 @@ const server = http.createServer(async (req, res) => {
   if (req.url === "/api/stock-analysis" || req.url?.startsWith("/api/stock-analysis?")) {
     try {
       await handleStockAnalysisRequest(req, res);
+    } catch (error) {
+      res.statusCode = 500;
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.end(
+        JSON.stringify({
+          error: "Internal Server Error",
+          code: "INTERNAL_SERVER_ERROR",
+          message: error.message,
+        }),
+      );
+    }
+    return;
+  }
+
+  if (
+    req.url === "/api/stock-analysis/audit/verify" ||
+    req.url?.startsWith("/api/stock-analysis/audit/verify?")
+  ) {
+    try {
+      await handleStockAnalysisAuditVerifyRequest(req, res);
     } catch (error) {
       res.statusCode = 500;
       res.setHeader("Content-Type", "application/json; charset=utf-8");

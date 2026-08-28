@@ -32,9 +32,10 @@ test("stock result hash is deterministic for the same safe payload", () => {
     request: REQUEST,
     result: snapshotResult(),
     mandateId: REQUEST.mandate.mandateId,
-    paymentReference: PAYMENT.reference,
+    payment: PAYMENT,
   });
   const second = createStockResultHash({
+    payment: PAYMENT,
     paymentReference: PAYMENT.reference,
     mandateId: REQUEST.mandate.mandateId,
     result: snapshotResult({
@@ -57,7 +58,7 @@ test("stock result hash changes when the analysis payload changes", () => {
     request: REQUEST,
     result: snapshotResult(),
     mandateId: REQUEST.mandate.mandateId,
-    paymentReference: PAYMENT.reference,
+    payment: PAYMENT,
   });
   const second = createStockResultHash({
     request: REQUEST,
@@ -71,7 +72,7 @@ test("stock result hash changes when the analysis payload changes", () => {
       },
     }),
     mandateId: REQUEST.mandate.mandateId,
-    paymentReference: PAYMENT.reference,
+    payment: PAYMENT,
   });
 
   assert.notEqual(first, second);
@@ -85,13 +86,29 @@ test("canonical stock proof payload excludes payment headers", () => {
     },
     result: snapshotResult(),
     mandateId: REQUEST.mandate.mandateId,
-    paymentReference: PAYMENT.reference,
+    payment: {
+      ...PAYMENT,
+      paymentHeader: "mock.do-not-include",
+    },
   });
   const serialized = JSON.stringify(payload);
 
   assert.doesNotMatch(serialized, /X-PAYMENT/i);
   assert.doesNotMatch(serialized, /mock\.do-not-include/u);
+  assert.equal(payload.scope, "stock-analysis");
+  assert.equal(payload.payment.mode, "mock");
+  assert.equal(payload.payment.status, "VERIFIED");
+  assert.equal(payload.payment.scheme, "mock-x402");
+  assert.equal(payload.payment.amount, "0.01");
+  assert.equal(payload.payment.currency, "USDC");
   assert.equal(payload.payment.reference, PAYMENT.reference);
+  assert.equal(payload.network.chainId, 8453);
+  assert.equal(payload.network.caip2, "eip155:8453");
+  assert.equal(
+    payload.asset.contractAddress,
+    "0xb200000000000000000000C2e324d24d7eEcd1fb",
+  );
+  assert.equal(payload.observed.blockNumber, "123456");
 });
 
 test("stock analysis audit record uses mock VERIFIED status and public ids", () => {
@@ -117,6 +134,7 @@ test("stock analysis audit record uses mock VERIFIED status and public ids", () 
   assert.notEqual(record.paymentStatus, "SETTLED");
   assert.equal(record.chainId, 8453);
   assert.equal(record.caip2, "eip155:8453");
+  assert.match(record.proofPayloadJson, /"payment"/u);
   assert.equal(record.request, undefined);
 });
 

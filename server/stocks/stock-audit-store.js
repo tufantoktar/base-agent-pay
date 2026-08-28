@@ -1,4 +1,4 @@
-export const STOCK_AUDIT_SCHEMA_VERSION = 1;
+export const STOCK_AUDIT_SCHEMA_VERSION = 2;
 
 export const STOCK_AUDIT_ERROR_CODES = Object.freeze({
   INVALID_RECORD: "STOCK_AUDIT_INVALID_RECORD",
@@ -91,6 +91,7 @@ export function assertValidStockAuditRecord(record) {
     "contractAddress",
     "resultStatus",
     "resultHash",
+    "proofPayloadJson",
     "observedBlockNumber",
     "observedAt",
     "createdAt",

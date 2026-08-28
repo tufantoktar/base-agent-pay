@@ -4,6 +4,11 @@ import test from "node:test";
 
 import { handleStockAnalysisAuditRequest } from "./stock-audit-handler.js";
 import { STOCK_AUDIT_ERROR_CODES } from "./stock-audit-store.js";
+import {
+  createCanonicalStockResultPayload,
+  createStockResultHashFromProofPayload,
+  serializeStockProofPayload,
+} from "./stock-audit-proof.js";
 import { SqliteStockAuditStore } from "./stock-audit-store-sqlite.js";
 
 const AUDIT_ID = "11111111-1111-4111-8111-111111111111";
@@ -30,6 +35,7 @@ test("lookup by valid auditId returns safe stock audit metadata", async () => {
     "0xb200000000000000000000C2e324d24d7eEcd1fb",
   );
   assert.equal(response.body.audit.id, undefined);
+  assert.equal(response.body.audit.proofPayloadJson, undefined);
   assert.doesNotMatch(JSON.stringify(response.body), /X-PAYMENT/i);
 });
 
@@ -114,6 +120,8 @@ function createStore() {
 }
 
 function auditRecord() {
+  const proof = proofFields();
+
   return {
     auditId: AUDIT_ID,
     requestId: "22222222-2222-4222-8222-222222222222",
@@ -131,7 +139,8 @@ function auditRecord() {
     caip2: "eip155:8453",
     contractAddress: "0xb200000000000000000000C2e324d24d7eEcd1fb",
     resultStatus: "OK",
-    resultHash: `sha256:${"a".repeat(64)}`,
+    resultHash: proof.resultHash,
+    proofPayloadJson: proof.proofPayloadJson,
     observedBlockNumber: "123456",
     observedAt: "2026-08-27T10:00:00.000Z",
     createdAt: "2026-08-27T12:00:00.000Z",
@@ -140,5 +149,54 @@ function auditRecord() {
     registrySource:
       "https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base#contract-addresses",
     rpcSource: "Base Mainnet",
+  };
+}
+
+function proofFields() {
+  const proofPayload = createCanonicalStockResultPayload({
+    request: {
+      symbol: "AAPLc",
+      analysisType: "snapshot",
+      scope: "stock-analysis",
+    },
+    result: {
+      ok: true,
+      analysisType: "snapshot",
+      asset: {
+        symbol: "AAPLc",
+        contractAddress: "0xb200000000000000000000C2e324d24d7eEcd1fb",
+      },
+      network: {
+        chainId: 8453,
+        caip2: "eip155:8453",
+      },
+      snapshot: {
+        tokenName: "Apple Inc.",
+        tokenSymbol: "AAPLc",
+        decimals: "8",
+        totalSupplyAtomic: "461502990000",
+        blockNumber: "123456",
+      },
+      provenance: {
+        registrySource:
+          "https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base#contract-addresses",
+        rpcSource: "Base Mainnet",
+        observedAt: "2026-08-27T10:00:00.000Z",
+      },
+    },
+    mandateId: "stock-mandate-lookup-test",
+    payment: {
+      mode: "mock",
+      status: "VERIFIED",
+      scheme: "mock-x402",
+      amount: "0.01",
+      currency: "USDC",
+      reference: "0xpayment-reference",
+    },
+  });
+
+  return {
+    resultHash: createStockResultHashFromProofPayload(proofPayload),
+    proofPayloadJson: serializeStockProofPayload(proofPayload),
   };
 }

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   STOCK_AUDIT_ERROR_CODES,
+  STOCK_AUDIT_SCHEMA_VERSION,
   StockAuditStoreError,
 } from "./stock-audit-store.js";
 import { PostgresStockAuditStore } from "./stock-audit-store-postgres.js";
@@ -26,6 +27,47 @@ test("Postgres stock audit connection failure is wrapped safely", async () => {
       return true;
     },
   );
+});
+
+test("Postgres stock audit migration adds proof payload column idempotently", async () => {
+  const queries = [];
+  let schemaVersion = "1";
+  const client = {
+    async query(sql, params = []) {
+      queries.push({ sql, params });
+      if (sql.includes("SELECT value FROM")) {
+        return { rows: schemaVersion ? [{ value: schemaVersion }] : [] };
+      }
+      if (sql.includes("UPDATE") && sql.includes("stock_audit_store_metadata")) {
+        schemaVersion = params[0];
+      }
+      if (sql.includes("INSERT INTO") && sql.includes("stock_audit_store_metadata")) {
+        schemaVersion = params[0];
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const pool = {
+    async connect() {
+      return client;
+    },
+  };
+
+  await new PostgresStockAuditStore({ pool }).ensureInitialized();
+  await new PostgresStockAuditStore({ pool }).ensureInitialized();
+
+  assert.equal(schemaVersion, String(STOCK_AUDIT_SCHEMA_VERSION));
+  assert.equal(
+    queries.filter(
+      ({ sql }) =>
+        sql.includes("ADD COLUMN IF NOT EXISTS") &&
+        sql.includes("proof_payload_json"),
+    ).length,
+    2,
+  );
+  assert.equal(queries.filter(({ sql }) => sql === "BEGIN").length, 2);
+  assert.equal(queries.filter(({ sql }) => sql === "COMMIT").length, 2);
 });
 
 function auditRecord() {

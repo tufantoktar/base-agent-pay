@@ -48,6 +48,7 @@ export class SqliteStockAuditStore extends StockAuditStore {
             contract_address,
             result_status,
             result_hash,
+            proof_payload_json,
             observed_block_number,
             observed_at,
             created_at,
@@ -73,6 +74,7 @@ export class SqliteStockAuditStore extends StockAuditStore {
             @contractAddress,
             @resultStatus,
             @resultHash,
+            @proofPayloadJson,
             @observedBlockNumber,
             @observedAt,
             @createdAt,
@@ -143,6 +145,7 @@ export class SqliteStockAuditStore extends StockAuditStore {
           contract_address TEXT NOT NULL,
           result_status TEXT NOT NULL,
           result_hash TEXT NOT NULL,
+          proof_payload_json TEXT,
           observed_block_number TEXT NOT NULL,
           observed_at TEXT NOT NULL,
           created_at TEXT NOT NULL,
@@ -157,6 +160,35 @@ export class SqliteStockAuditStore extends StockAuditStore {
         CREATE INDEX IF NOT EXISTS idx_stock_analysis_audit_created_at
           ON stock_analysis_audit(created_at);
       `);
+      this.migrateSchema();
+    } catch (error) {
+      if (error instanceof StockAuditStoreError) {
+        throw error;
+      }
+      throw storeError("Stock audit schema initialization failed.", error);
+    }
+  }
+
+  migrateSchema() {
+    const version = this.db
+      .prepare("SELECT value FROM stock_audit_store_metadata WHERE key = 'schema_version'")
+      .get()?.value;
+
+    if (version && !["1", String(STOCK_AUDIT_SCHEMA_VERSION)].includes(version)) {
+      throw new StockAuditStoreError(
+        `Unsupported stock audit store schema version: ${version}.`,
+      );
+    }
+
+    if (!hasColumn(this.db, "stock_analysis_audit", "proof_payload_json")) {
+      this.db.exec("ALTER TABLE stock_analysis_audit ADD COLUMN proof_payload_json TEXT");
+    }
+
+    if (version) {
+      this.db
+        .prepare("UPDATE stock_audit_store_metadata SET value = ? WHERE key = 'schema_version'")
+        .run(String(STOCK_AUDIT_SCHEMA_VERSION));
+    } else {
       this.db
         .prepare(
           `INSERT INTO stock_audit_store_metadata (key, value)
@@ -164,20 +196,15 @@ export class SqliteStockAuditStore extends StockAuditStore {
            ON CONFLICT(key) DO NOTHING`,
         )
         .run(String(STOCK_AUDIT_SCHEMA_VERSION));
+    }
 
-      const version = this.db
-        .prepare("SELECT value FROM stock_audit_store_metadata WHERE key = 'schema_version'")
-        .get()?.value;
-      if (version !== String(STOCK_AUDIT_SCHEMA_VERSION)) {
-        throw new StockAuditStoreError(
-          `Unsupported stock audit store schema version: ${version}.`,
-        );
-      }
-    } catch (error) {
-      if (error instanceof StockAuditStoreError) {
-        throw error;
-      }
-      throw storeError("Stock audit schema initialization failed.", error);
+    const currentVersion = this.db
+      .prepare("SELECT value FROM stock_audit_store_metadata WHERE key = 'schema_version'")
+      .get()?.value;
+    if (currentVersion !== String(STOCK_AUDIT_SCHEMA_VERSION)) {
+      throw new StockAuditStoreError(
+        `Unsupported stock audit store schema version: ${currentVersion}.`,
+      );
     }
   }
 }
@@ -188,6 +215,13 @@ function openDatabase(path) {
   }
 
   return new DatabaseSync(path);
+}
+
+function hasColumn(db, tableName, columnName) {
+  return db
+    .prepare(`PRAGMA table_info(${tableName})`)
+    .all()
+    .some((column) => column.name === columnName);
 }
 
 function toInsertParams(record) {
@@ -209,6 +243,7 @@ function toInsertParams(record) {
     contractAddress: record.contractAddress,
     resultStatus: record.resultStatus,
     resultHash: record.resultHash,
+    proofPayloadJson: record.proofPayloadJson,
     observedBlockNumber: record.observedBlockNumber ?? null,
     observedAt: record.observedAt ?? null,
     createdAt: record.createdAt,
@@ -239,6 +274,7 @@ function mapAuditRow(row) {
     contractAddress: row.contract_address,
     resultStatus: row.result_status,
     resultHash: row.result_hash,
+    proofPayloadJson: row.proof_payload_json ?? "",
     observedBlockNumber: row.observed_block_number ?? "",
     observedAt: row.observed_at ?? "",
     createdAt: row.created_at,

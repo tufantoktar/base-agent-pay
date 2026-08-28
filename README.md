@@ -536,6 +536,84 @@ not a Base transaction, and not an onchain receipt. Phase 2E does not add stock
 trading, wallet signing, token approvals, token transfers, transaction
 submission, blockchain writes, live stock x402, or Vercel environment changes.
 
+## B20 Stock Intelligence — Phase 2F
+
+Phase 2F adds read-only integrity verification for stock audit records. This is
+an application-level consistency proof: it recomputes the stored `resultHash`
+from durable safe proof material and reports whether the audit row, proof
+payload, and hash still agree. It is not an onchain receipt, blockchain proof,
+attestation service, settlement proof, transaction proof, or finality signal.
+
+New audit rows store a canonical proof payload JSON string alongside the public
+audit metadata. The canonical payload is serialized with the same stable key
+ordering used by `resultHash` and binds:
+
+- `version`
+- `mandateId`
+- `symbol`
+- `analysisType`
+- `scope`
+- `resultStatus`
+- MOCK payment mode, status, scheme, amount, currency, and reference
+- Base network fields: `chainId` and `caip2`
+- trusted registry `contractAddress`
+- the safe analysis payload: `snapshot`, or `risk` plus `snapshot`
+- observed block number, observed timestamp, registry source, and RPC source
+
+The payload excludes `X-PAYMENT`, payment signatures, client headers, raw HTTP
+requests, wallet data, database URLs, API keys, and secrets.
+
+Verification endpoint:
+
+```text
+GET /api/stock-analysis/audit/verify?id=<auditId>
+```
+
+Successful verification lookup response:
+
+```json
+{
+  "ok": true,
+  "verification": {
+    "auditId": "11111111-1111-4111-8111-111111111111",
+    "requestId": "22222222-2222-4222-8222-222222222222",
+    "status": "VALID",
+    "storedResultHash": "sha256:...",
+    "computedResultHash": "sha256:...",
+    "matches": true,
+    "verifiedAt": "2026-08-27T13:00:00.000Z"
+  }
+}
+```
+
+Verification status values are:
+
+- `VALID`: the stored hash matches the recomputed canonical proof payload and
+  safe row metadata agrees with the payload.
+- `INVALID`: proof material is present, but the row, payload, or hash no longer
+  agree.
+- `UNVERIFIABLE`: required proof material is missing or malformed, such as an
+  old Phase 2E row without canonical proof payload JSON.
+
+Phase 2F upgrades the stock audit schema to version `2` with an idempotent,
+non-destructive migration that adds nullable `proof_payload_json`. Historical
+Phase 2E rows are preserved. They are not silently rewritten and missing proof
+material returns `UNVERIFIABLE`.
+
+Replay behavior remains explicit: every accepted execution gets a unique
+server-generated `requestId` and every successful audit gets a unique
+server-generated `auditId`. Identical logical requests may share the same
+deterministic `requestHash`, and mock payment references may also repeat when
+the same mock proof is reused. Neither value is treated as the durable execution
+identity, and repeated executions create separate audit rows instead of
+overwriting each other.
+
+The verification endpoint is GET-only and side-effect free. It performs no
+payment verification, no facilitator settlement, no wallet signing, no token
+approval, no token transfer, no trade execution, no Base transaction, and no
+blockchain write. Live stock x402 remains disabled, and MOCK `VERIFIED` must not
+be described as `SETTLED`.
+
 ## Mandate v1
 
 Receipts explain what happened. Mandates prevent disallowed execution before payment.

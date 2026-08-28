@@ -10,6 +10,10 @@ import {
 } from "./stock-analysis-handler.js";
 import { STOCK_AUDIT_ERROR_CODES } from "./stock-audit-store.js";
 import { SqliteStockAuditStore } from "./stock-audit-store-sqlite.js";
+import {
+  STOCK_AUDIT_VERIFICATION_STATUSES,
+  verifyStockAuditRecord,
+} from "./stock-audit-verification.js";
 import { STOCK_MANDATE_CODES } from "./stock-mandate.js";
 import { createStockPaymentAdapter } from "./stock-payment.js";
 
@@ -634,6 +638,39 @@ test("requestId and auditId are unique across accepted executions", async () => 
   assert.notEqual(first.body.audit.requestId, second.body.audit.requestId);
 });
 
+test("duplicate logical stock executions create independent verifiable audit rows", async () => {
+  const auditStore = new SqliteStockAuditStore({
+    path: ":memory:",
+    now: () => new Date("2026-08-27T12:00:00.000Z"),
+  });
+  test.after(() => auditStore.close());
+
+  const body = {
+    symbol: "AAPLc",
+    analysisType: "snapshot",
+    scope: "stock-analysis",
+    mandate: validMandate(),
+  };
+  const first = await callStockAnalysis(body, { auditStore });
+  const second = await callStockAnalysis(body, { auditStore });
+  const firstAudit = auditStore.getAuditRecord(first.body.audit.auditId);
+  const secondAudit = auditStore.getAuditRecord(second.body.audit.auditId);
+
+  assert.equal(countAudits(auditStore), 2);
+  assert.notEqual(firstAudit.auditId, secondAudit.auditId);
+  assert.notEqual(firstAudit.requestId, secondAudit.requestId);
+  assert.equal(firstAudit.requestHash, secondAudit.requestHash);
+  assert.equal(firstAudit.paymentReference, secondAudit.paymentReference);
+  assert.equal(
+    verifyStockAuditRecord(firstAudit).status,
+    STOCK_AUDIT_VERIFICATION_STATUSES.VALID,
+  );
+  assert.equal(
+    verifyStockAuditRecord(secondAudit).status,
+    STOCK_AUDIT_VERIFICATION_STATUSES.VALID,
+  );
+});
+
 test("audit record pins Base Mainnet chain id", async () => {
   const response = await callStockAnalysis({
     symbol: "AAPLc",
@@ -666,6 +703,7 @@ test("security regression: stock-analysis implementation exposes no write surfac
   const files = [
     new URL("../../api/stock-analysis.js", import.meta.url),
     new URL("../../api/stock-analysis/audit.js", import.meta.url),
+    new URL("../../api/stock-analysis/audit/verify.js", import.meta.url),
     new URL("./stock-analysis-engine.js", import.meta.url),
     new URL("./stock-analysis-handler.js", import.meta.url),
     new URL("./stock-audit-handler.js", import.meta.url),
@@ -674,6 +712,8 @@ test("security regression: stock-analysis implementation exposes no write surfac
     new URL("./stock-audit-store-postgres.js", import.meta.url),
     new URL("./stock-audit-store-sqlite.js", import.meta.url),
     new URL("./stock-audit-store.js", import.meta.url),
+    new URL("./stock-audit-verification.js", import.meta.url),
+    new URL("./stock-audit-verify-handler.js", import.meta.url),
     new URL("./stock-bazaar-discovery.js", import.meta.url),
     new URL("./stock-mandate.js", import.meta.url),
     new URL("./stock-payment.js", import.meta.url),

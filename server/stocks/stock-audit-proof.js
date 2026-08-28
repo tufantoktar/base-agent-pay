@@ -7,6 +7,7 @@ import {
 } from "./stock-audit-store.js";
 
 export const STOCK_AUDIT_PAYMENT_STATUS = "VERIFIED";
+export const STOCK_AUDIT_PROOF_VERSION = 1;
 export const STOCK_AUDIT_RESULT_STATUS = "OK";
 
 export function createStockAnalysisAuditRecord({
@@ -28,17 +29,26 @@ export function createStockAnalysisAuditRecord({
     createdAt: toUtcTimestamp(now),
   });
   const { canonicalRequest, ...auditFields } = normalized;
+  const proofPayload = createCanonicalStockResultPayload({
+    request: canonicalRequest,
+    result,
+    mandateId: normalized.mandateId,
+    payment: {
+      mode: normalized.paymentMode,
+      status: normalized.paymentStatus,
+      scheme: normalized.paymentScheme,
+      amount: normalized.paymentAmount,
+      currency: normalized.paymentCurrency,
+      reference: normalized.paymentReference,
+    },
+  });
 
   return {
     auditId: createAuditId(),
     requestId: createRequestId(),
     ...auditFields,
-    resultHash: createStockResultHash({
-      request: canonicalRequest,
-      result,
-      mandateId: normalized.mandateId,
-      paymentReference: normalized.paymentReference,
-    }),
+    proofPayloadJson: serializeStockProofPayload(proofPayload),
+    resultHash: createStockResultHashFromProofPayload(proofPayload),
   };
 }
 
@@ -46,42 +56,59 @@ export function createStockResultHash({
   request,
   result,
   mandateId,
+  payment,
   paymentReference,
 } = {}) {
-  return `sha256:${hashHex(
+  return createStockResultHashFromProofPayload(
     createCanonicalStockResultPayload({
       request,
       result,
       mandateId,
+      payment,
       paymentReference,
     }),
-  )}`;
+  );
+}
+
+export function createStockResultHashFromProofPayload(proofPayload) {
+  return `sha256:${hashHex(proofPayload)}`;
+}
+
+export function serializeStockProofPayload(proofPayload) {
+  return stableStringify(proofPayload);
 }
 
 export function createCanonicalStockResultPayload({
   request,
   result,
   mandateId,
+  payment,
   paymentReference,
 } = {}) {
   const safeResult = extractResultFields(result);
+  const proofPayment = normalizeProofPayment({ payment, paymentReference });
 
   return removeUndefined({
+    version: STOCK_AUDIT_PROOF_VERSION,
+    mandateId,
     symbol: safeResult.symbol,
     analysisType: safeResult.analysisType || request?.analysisType,
-    chainId: safeResult.chainId,
-    caip2: safeResult.caip2,
-    contractAddress: safeResult.contractAddress,
+    scope: normalizeText(request?.scope),
+    resultStatus: STOCK_AUDIT_RESULT_STATUS,
+    payment: proofPayment,
+    network: {
+      chainId: safeResult.chainId,
+      caip2: safeResult.caip2,
+    },
+    asset: {
+      contractAddress: safeResult.contractAddress,
+    },
     analysis: safeResult.analysis,
     observed: {
       blockNumber: safeResult.observedBlockNumber,
       observedAt: safeResult.observedAt,
       registrySource: safeResult.registrySource,
       rpcSource: safeResult.rpcSource,
-    },
-    mandateId,
-    payment: {
-      reference: paymentReference,
     },
   });
 }
@@ -199,6 +226,17 @@ function extractResultFields(result) {
 
 function hashHex(value) {
   return createHash("sha256").update(stableStringify(value)).digest("hex");
+}
+
+function normalizeProofPayment({ payment, paymentReference } = {}) {
+  return removeUndefined({
+    mode: normalizeText(payment?.mode),
+    status: normalizeText(payment?.status),
+    scheme: normalizeText(payment?.scheme),
+    amount: normalizeText(payment?.amount),
+    currency: normalizeText(payment?.currency),
+    reference: normalizeText(payment?.reference) || normalizeText(paymentReference),
+  });
 }
 
 function removeUndefined(value) {
